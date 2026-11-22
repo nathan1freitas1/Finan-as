@@ -471,7 +471,7 @@
       }, pago ? '✓' : ''),
       h('div', { class: 'meio' },
         h('div', { class: 'desc' }, L.rotulo(l)),
-        h('div', { class: 'sub' }, L.formatData(l.data) + (l.fixo ? ' · fixo' : '') + (l.categoria && !estado.agrupar ? ' · ' + L.categoriaDe(l.categoria).nome : '') + (pago ? '' : ' · pendente'))),
+        h('div', { class: 'sub' }, L.formatData(l.data) + (l.fixo ? ' · fixo' : '') + (l.titular ? ' · ' + l.titular : '') + (l.categoria && !estado.agrupar ? ' · ' + L.categoriaDe(l.categoria).nome : '') + (pago ? '' : ' · pendente'))),
       h('div', { class: 'val ' + (sinal > 0 ? 'pos' : 'neg') }, (sinal > 0 ? '+' : '') + L.formatBRL(sinal * l.valor)));
   }
 
@@ -689,6 +689,7 @@
 
     fechar = abrirFolha([
       h('h3', {}, existente ? 'Editar lançamento' : 'Novo lançamento'),
+      !existente && h('button', { type: 'button', class: 'link-fatura', onclick: () => { fechar(); abrirImportacao(); } }, '📄 Importar fatura do cartão (PDF)'),
       h('div', { class: 'seg' }, btnRec, btnDes),
       !existente && h('div', { class: 'seg tres' }, btnUnica, btnFixa, btnParc),
       campoValor(inValor),
@@ -915,9 +916,156 @@
     await DB.salvarExcecao({ id: excId(alvo.id, chave), fixoId: alvo.id, mes: chave, status: c.status });
   }
 
+
+  // ---------- importar fatura do cartão (PDF do Itaú) ----------
+  // O PDF é lido aqui no aparelho (biblioteca pdf.js, na pasta vendor). Nada é enviado para fora.
+  async function extrairItensPDF(arquivo) {
+    if (self.__extrairItensTeste) return self.__extrairItensTeste(arquivo); // gancho dos testes
+    const buf = await arquivo.arrayBuffer();
+    const pdfjs = await import('./vendor/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.min.mjs', location.href).href;
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    const paginas = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const pg = await doc.getPage(p);
+      const tc = await pg.getTextContent();
+      paginas.push(tc.items.filter((i) => i.str && i.str.trim()).map((i) => ({ s: i.str, x: i.transform[4], y: i.transform[5], w: i.width })));
+    }
+    return paginas;
+  }
+
+  function abrirImportacao() {
+    const hoje = L.hojeISO();
+    const memoria = Object.assign({}, estado.cfg.catMemoria || {});
+    const zona = h('div');
+    const entrada = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none' });
+    let fechar;
+
+    function mensagem(txt, classe) { zona.replaceChildren(h('p', { class: classe || 'nota' }, txt), botaoEscolher()); }
+    const botaoEscolher = () => h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'primario', onclick: () => entrada.click() }, 'Escolher o PDF da fatura'));
+
+    entrada.addEventListener('change', async () => {
+      const arq = entrada.files && entrada.files[0];
+      if (!arq) return;
+      zona.replaceChildren(h('p', { class: 'nota' }, 'Lendo a fatura…'));
+      try {
+        const fat = Fatura.lerFatura(await extrairItensPDF(arq));
+        entrada.value = '';
+        if (!fat.ok) { mensagem(fat.erro, 'erro'); return; }
+        revisar(fat);
+      } catch (e) {
+        entrada.value = '';
+        const senha = e && (e.name === 'PasswordException' || /password/i.test(String(e.message)));
+        mensagem(senha ? 'Esse PDF tem senha. Abra no leitor de PDF, salve uma cópia sem senha e tente de novo.' : 'Não consegui ler esse arquivo. Confira se é o PDF da fatura (não uma foto) e se há internet na primeira vez.', 'erro');
+      }
+    });
+
+    function revisar(fat) {
+      const chaves = Fatura.chavesItens(fat);
+      const importadas = new Set(estado.lancs.map((l) => l.impKey).filter(Boolean));
+      // compras já lançadas à mão: mesmo valor, perto do vencimento; cada lançamento casa com uma compra só
+      const usados = new Set();
+      const dia = (d) => Date.parse(d + 'T12:00:00Z') / 864e5;
+      const linhas = fat.itens.map((it, k) => {
+        let dup = null;
+        if (importadas.has(chaves[k])) dup = 'importada';
+        else if (it.valor > 0) {
+          const m = estado.lancs.find((l) => !usados.has(l.id) && !l.impKey && l.tipo === 'despesa' && l.valor === it.valor
+            && Math.abs(dia(l.data) - dia(fat.vencimento)) <= 35);
+          if (m) { usados.add(m.id); dup = 'lancada'; }
+        }
+        const sug = Fatura.sugerirCategoria(it, memoria);
+        return { it, chave: chaves[k], dup, sel: !dup, cat: sug, sug };
+      });
+      const titulares = [...new Set(fat.itens.map((i) => i.titular))];
+      const resumo = h('div', { class: 'imp-resumo' });
+      const lista = h('div', { class: 'imp-lista' });
+      const botao = h('button', { type: 'button', class: 'primario' });
+      const erro = h('div', { class: 'erro' });
+      const chips = h('div', { class: 'chips', style: 'margin:8px 0' });
+
+      const totalSel = () => linhas.filter((x) => x.sel).reduce((s, x) => s + x.it.valor, 0);
+      function atualizar() {
+        const n = linhas.filter((x) => x.sel).length;
+        botao.textContent = n ? 'Importar ' + n + ' · ' + L.formatBRL(totalSel()) : 'Nenhum item marcado';
+        botao.disabled = !n;
+        chips.replaceChildren(...titulares.filter((t) => t).map((t) => {
+          const meus = linhas.filter((x) => x.it.titular === t && !x.dup);
+          const todos = meus.length && meus.every((x) => x.sel);
+          const soma = linhas.filter((x) => x.it.titular === t).reduce((s, x) => s + x.it.valor, 0);
+          return h('button', { type: 'button', class: 'chip' + (todos ? ' on' : ''), onclick: () => { meus.forEach((x) => { x.sel = !todos; }); desenharLista(); atualizar(); } },
+            t + ' · ' + L.formatBRL(soma));
+        }));
+      }
+      function desenharLista() {
+        lista.replaceChildren(...linhas.map((x) => {
+          const cb = h('input', { type: 'checkbox' });
+          cb.checked = x.sel;
+          cb.addEventListener('change', () => { x.sel = cb.checked; atualizar(); });
+          const sel = h('select', { 'aria-label': 'Categoria' }, h('option', { value: '' }, 'Sem categoria'), ...L.CATEGORIAS.map((c) => h('option', { value: c.id }, c.nome)));
+          sel.value = x.cat || '';
+          sel.addEventListener('change', () => { x.cat = sel.value || null; });
+          const neg = x.it.valor < 0;
+          const sub = [x.it.data, x.it.titular, x.it.parcela ? 'parcela ' + x.it.parcela + '/' + x.it.parcelaTotal : '',
+            neg ? 'estorno' : '', x.dup === 'importada' ? 'já importada antes' : x.dup === 'lancada' ? 'parece já lançada' : ''].filter(Boolean).join(' · ');
+          return h('div', { class: 'imp-item' + (x.dup ? ' dup' : '') },
+            cb,
+            h('div', { class: 'imp-meio' }, h('div', { class: 'imp-desc' }, x.it.desc), h('div', { class: 'sub' }, sub), neg ? null : sel),
+            h('div', { class: 'imp-val ' + (neg ? 'pos' : 'neg') }, (neg ? '+' : '') + L.formatBRL(Math.abs(x.it.valor))));
+        }));
+      }
+
+      const dv = fat.vencimento.split('-').reverse().join('/');
+      resumo.replaceChildren(
+        h('div', { class: 'imp-cab' }, 'Vencimento ' + dv + (fat.cartaoFinal ? ' · cartão final ' + fat.cartaoFinal : '')),
+        h('div', { class: fat.confere ? 'imp-ok' : 'erro' }, fat.confere
+          ? '✓ Conferido: as ' + fat.itens.length + ' compras somam ' + L.formatBRL(fat.somaItens) + ', igual ao total da fatura.'
+          : '⚠ As compras lidas somam ' + L.formatBRL(fat.somaItens) + ' e a fatura diz ' + (fat.totalLancamentos != null ? L.formatBRL(fat.totalLancamentos) : '—') + '. Confira antes de importar.'),
+        h('p', { class: 'nota', style: 'margin:6px 0 0' }, 'Entram como despesas pendentes no dia do vencimento. Desmarque o que não quiser. Toque no nome do titular para marcar ou desmarcar todas as compras dele.'));
+
+      botao.addEventListener('click', async () => {
+        const marcados = linhas.filter((x) => x.sel);
+        if (!marcados.length) return;
+        botao.disabled = true; botao.textContent = 'Importando…';
+        try {
+          const status = L.statusPadrao(fat.vencimento, hoje);
+          for (const x of marcados) {
+            const neg = x.it.valor < 0;
+            const l = { tipo: neg ? 'receita' : 'despesa', valor: Math.abs(x.it.valor), descricao: x.it.desc + (neg ? ' (estorno)' : ''),
+              data: fat.vencimento, status, categoria: neg ? null : x.cat, impKey: x.chave, origem: 'fatura' };
+            if (x.it.titular) l.titular = x.it.titular;
+            if (x.it.parcela) { l.parcela = x.it.parcela; l.parcelaTotal = x.it.parcelaTotal; }
+            await DB.salvarLancamento(l);
+            // lembra a categoria escolhida para esse estabelecimento na próxima fatura
+            const k = Fatura.chaveMemoria(x.it.desc);
+            if (k && !neg && x.cat !== x.sug) memoria[k] = x.cat;
+          }
+          const chavesMem = Object.keys(memoria);
+          if (chavesMem.length > 600) chavesMem.slice(0, chavesMem.length - 600).forEach((k) => delete memoria[k]);
+          await DB.salvarConfig('catMemoria', memoria);
+          fechar();
+          estado.ano = +fat.vencimento.slice(0, 4); estado.mes = +fat.vencimento.slice(5, 7);
+          await recarregar();
+        } catch (e) {
+          erro.textContent = 'Algo deu errado ao importar. Nada foi perdido; tente de novo.';
+          botao.disabled = false; atualizar();
+        }
+      });
+
+      desenharLista(); atualizar();
+      zona.replaceChildren(resumo, chips, lista, erro,
+        h('div', { class: 'acoes imp-acoes' }, h('button', { type: 'button', onclick: () => fechar() }, 'Cancelar'), botao));
+    }
+
+    zona.replaceChildren(
+      h('p', { class: 'nota' }, 'Escolha o PDF da fatura do cartão Itaú. A leitura é feita neste aparelho; o arquivo não é enviado para lugar nenhum.'),
+      botaoEscolher());
+    fechar = abrirFolha([h('h3', {}, 'Importar fatura do cartão'), entrada, zona]);
+  }
+
   // ---------- atualizar o app ----------
   // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
-  const VERSAO_APP = '5';
+  const VERSAO_APP = '7';
   async function atualizarApp(btn) {
     btn.textContent = 'Atualizando…'; btn.disabled = true;
     try {
@@ -934,17 +1082,42 @@
   }
 
   // ---------- ajustes ----------
+  // ---------- gaveta lateral ----------
+  function abrirGaveta(titulo, conteudo) {
+    const fundo = h('div', { class: 'gaveta-fundo', onclick: (e) => { if (e.target === fundo) fechar(); } });
+    const painel = h('aside', { class: 'gaveta', role: 'dialog', 'aria-label': titulo },
+      h('div', { class: 'gaveta-topo' }, h('h3', {}, titulo),
+        h('button', { class: 'icone', 'aria-label': 'Fechar', onclick: () => fechar() }, '✕')),
+      h('div', { class: 'gaveta-corpo' }, conteudo));
+    fundo.append(painel);
+    const tecla = (e) => { if (e.key === 'Escape') fechar(); };
+    function fechar() {
+      document.removeEventListener('keydown', tecla);
+      fundo.classList.remove('aberta');
+      setTimeout(() => fundo.remove(), 180);
+    }
+    document.addEventListener('keydown', tecla);
+    document.body.append(fundo);
+    requestAnimationFrame(() => fundo.classList.add('aberta'));
+    return fechar;
+  }
+
+  // ---------- ajustes ----------
   function abrirAjustes() {
     const inSaldo = h('input', { type: 'text', inputmode: 'decimal', value: L.valorParaInput(estado.cfg.saldoInicial), placeholder: '0,00' });
-    const erro = h('div', { class: 'erro' });
-    const caixaBackup = h('textarea', { placeholder: 'Para restaurar, cole aqui o backup e toque em Importar.' });
-    const textoUltimoBackup = () => (estado.cfg.ultimoBackup ? 'Último backup: ' + estado.cfg.ultimoBackup.split('-').reverse().join('/') : 'Você ainda não fez nenhum backup.');
-    const ultimo = h('p', { class: 'nota', style: 'font-weight:600' }, textoUltimoBackup());
+    const erroSaldo = h('div', { class: 'erro' });
+    const msg = h('div', { class: 'aj-msg', role: 'status' });
+    const textoUltimoBackup = () => (estado.cfg.ultimoBackup ? 'Último arquivo gerado: ' + estado.cfg.ultimoBackup.split('-').reverse().join('/') : 'Você ainda não gerou nenhum arquivo de backup.');
+    const ultimo = h('p', { class: 'nota', style: 'margin:10px 0 0' }, textoUltimoBackup());
+    const zonaImport = h('div');
+    const caixaTexto = h('textarea', { placeholder: 'Cole aqui o texto do backup.' });
+    const entradaArquivo = h('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
     let fechar;
+    const aviso = (txt, erro) => { msg.className = 'aj-msg' + (erro ? ' erro' : ' ok'); msg.textContent = txt; };
 
     async function salvarSaldo() {
       const v = L.parseValor(inSaldo.value);
-      if (v == null) { erro.textContent = 'Valor inválido.'; return; }
+      if (v == null) { erroSaldo.textContent = 'Valor inválido.'; return; }
       const neg = /^\s*-/.test(inSaldo.value); // aceita saldo negativo se digitar com "-"
       await DB.salvarConfig('saldoInicial', neg ? -v : v);
       await DB.salvarConfig('saldoDefinido', true);
@@ -952,45 +1125,108 @@
       await recarregar();
     }
 
-    async function exportar() {
+    async function gerarArquivo() {
       const json = await DB.exportar();
-      caixaBackup.value = json;
       await DB.salvarConfig('ultimoBackup', L.hojeISO());
       estado.cfg.ultimoBackup = L.hojeISO();
       ultimo.textContent = textoUltimoBackup();
       desenhar();
+      return { json, nome: 'meu-caixa-' + L.hojeISO() + '.json' };
+    }
+
+    async function baixar() {
       try {
-        const a = h('a', { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: 'meu-caixa-backup-' + L.hojeISO() + '.json' });
+        const { json, nome } = await gerarArquivo();
+        const a = h('a', { href: URL.createObjectURL(new Blob([json], { type: 'application/json' })), download: nome });
         document.body.append(a); a.click(); a.remove();
-      } catch (e) { /* alguns ambientes bloqueiam download; o texto fica na caixa para copiar */ }
-      try { await navigator.clipboard.writeText(json); erro.textContent = 'Backup gerado e copiado.'; } catch (e) { erro.textContent = 'Backup gerado na caixa abaixo: copie o texto.'; }
+        aviso('Arquivo ' + nome + ' baixado. Leve para o outro aparelho e use "Carregar arquivo".');
+      } catch (e) { aviso('Não consegui gerar o arquivo.', true); }
     }
 
-    async function importar(btn) {
-      if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.textContent = 'Substitui tudo. Toque de novo'; return; }
-      try { await DB.importar(caixaBackup.value); fechar(); await recarregar(); }
-      catch (e) { erro.textContent = 'Não consegui importar: ' + e.message; btn.dataset.confirma = ''; btn.textContent = 'Importar'; }
+    async function compartilhar() {
+      try {
+        const { json, nome } = await gerarArquivo();
+        const arq = new File([json], nome, { type: 'application/json' });
+        await navigator.share({ files: [arq], title: 'Dados do Meu Caixa' });
+        aviso('Arquivo enviado.');
+      } catch (e) { if (!e || e.name !== 'AbortError') aviso('Não consegui compartilhar. Use "Baixar arquivo".', true); }
     }
 
-    fechar = abrirFolha([
-      h('h3', {}, 'Ajustes'),
-      h('label', { class: 'campo' }, 'Saldo inicial (quanto você tem hoje, somando tudo)', inSaldo),
-      h('p', { class: 'nota' }, 'É o ponto de partida. Os lançamentos pagos somam ou subtraem a partir dele.'),
-      erro,
-      h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'primario', onclick: salvarSaldo }, 'Salvar saldo')),
-      h('div', { class: 'sep' }),
-      h('h3', {}, 'Backup'),
-      h('p', { class: 'nota' }, 'Seus dados ficam só neste aparelho. Faça backup de vez em quando.'),
-      ultimo,
-      caixaBackup,
-      h('div', { class: 'acoes', style: 'margin-top:10px' },
-        h('button', { type: 'button', onclick: exportar }, 'Exportar'),
-        h('button', { type: 'button', onclick: (e) => importar(e.currentTarget) }, 'Importar')),
-      h('div', { class: 'sep' }),
-      h('h3', {}, 'Atualizar o aplicativo'),
-      h('p', { class: 'nota' }, 'Baixa a versão mais recente (precisa de internet). Seus lançamentos não são apagados.'),
-      h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: (e) => atualizarApp(e.currentTarget) }, 'Atualizar agora')),
-      h('p', { class: 'nota' }, 'Versão instalada: ' + VERSAO_APP),
+    async function copiar() {
+      try { await navigator.clipboard.writeText(await DB.exportar()); aviso('Texto copiado. Cole no outro aparelho em "Colar texto".'); }
+      catch (e) { aviso('Não consegui copiar. Use "Baixar arquivo".', true); }
+    }
+
+    // ---- receber dados: lê o arquivo, mostra o que tem dentro e pergunta como juntar
+    function lerTexto(texto) {
+      let d;
+      try { d = DB.lerBackup(texto); } catch (e) { zonaImport.replaceChildren(h('p', { class: 'erro' }, e.message + '.')); return; }
+      const quando = d.geradoEm ? new Date(d.geradoEm).toLocaleDateString('pt-BR') : null;
+      const aqui = estado.lancs.length;
+      zonaImport.replaceChildren(
+        h('div', { class: 'aj-previa' },
+          h('strong', {}, 'Arquivo pronto' + (quando ? ' · gerado em ' + quando : '')),
+          h('div', {}, d.lancamentos.length + (d.lancamentos.length === 1 ? ' lançamento · ' : ' lançamentos · ') + (d.fixos || []).length + ((d.fixos || []).length === 1 ? ' fixo' : ' fixos')),
+          h('div', { class: 'sub' }, 'Neste aparelho há ' + aqui + (aqui === 1 ? ' lançamento.' : ' lançamentos.'))),
+        h('div', { class: 'aj-opcoes' },
+          h('button', { type: 'button', class: 'primario', onclick: () => aplicar(texto, 'juntar') }, 'Juntar com o que já tenho aqui'),
+          h('p', { class: 'nota', style: 'margin:4px 2px 10px' }, 'Nada se perde. Só não leva junto o que você apagou em um dos aparelhos.'),
+          h('button', { type: 'button', class: 'perigo', onclick: (e) => doisToques(e.currentTarget, 'Toque de novo: apaga os dados daqui', () => aplicar(texto, 'substituir')) }, 'Substituir tudo por este arquivo'),
+          h('p', { class: 'nota', style: 'margin:4px 2px 0' }, 'Deixa este aparelho igual ao arquivo.')));
+    }
+
+    async function aplicar(texto, modo) {
+      try { await DB.importar(texto, modo); fechar(); await recarregar(); }
+      catch (e) { zonaImport.replaceChildren(h('p', { class: 'erro' }, 'Não consegui importar: ' + e.message)); }
+    }
+
+    function receberArquivo(arq) {
+      if (!arq) return;
+      const leitor = new FileReader();
+      leitor.onload = () => lerTexto(String(leitor.result));
+      leitor.onerror = () => zonaImport.replaceChildren(h('p', { class: 'erro' }, 'Não consegui abrir esse arquivo.'));
+      leitor.readAsText(arq);
+    }
+    entradaArquivo.addEventListener('change', () => { receberArquivo(entradaArquivo.files[0]); entradaArquivo.value = ''; });
+
+    const zona = h('label', { class: 'aj-zona', tabindex: '0' },
+      h('span', { class: 'aj-zona-ic' }, '⤒'),
+      h('span', { class: 'aj-zona-t' }, 'Carregar arquivo de dados'),
+      h('span', { class: 'sub' }, 'Toque para escolher ou arraste o arquivo para cá'),
+      entradaArquivo);
+    ['dragenter', 'dragover'].forEach((ev) => zona.addEventListener(ev, (e) => { e.preventDefault(); zona.classList.add('sobre'); }));
+    ['dragleave', 'drop'].forEach((ev) => zona.addEventListener(ev, (e) => { e.preventDefault(); zona.classList.remove('sobre'); }));
+    zona.addEventListener('drop', (e) => receberArquivo(e.dataTransfer && e.dataTransfer.files[0]));
+
+    const podeCompartilhar = !!(navigator.canShare && navigator.share && (() => { try { return navigator.canShare({ files: [new File(['{}'], 'a.json', { type: 'application/json' })] }); } catch (e) { return false; } })());
+
+    fechar = abrirGaveta('Ajustes', [
+      h('section', { class: 'aj-cartao' },
+        h('h4', {}, 'Saldo inicial'),
+        h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Quanto você tem hoje, somando tudo. Os lançamentos pagos somam ou subtraem a partir dele.'),
+        inSaldo, erroSaldo,
+        h('div', { class: 'acoes', style: 'margin-top:10px' }, h('button', { type: 'button', class: 'primario', onclick: salvarSaldo }, 'Salvar saldo'))),
+
+      h('section', { class: 'aj-cartao' },
+        h('h4', {}, 'Levar dados para outro aparelho'),
+        h('p', { class: 'nota', style: 'margin:0 0 12px' }, 'Seus dados ficam só neste aparelho. Gere um arquivo aqui e carregue no outro. Serve também como backup.'),
+        h('div', { class: 'aj-botoes' },
+          h('button', { type: 'button', class: 'primario', onclick: baixar }, '⬇  Baixar arquivo'),
+          podeCompartilhar && h('button', { type: 'button', onclick: compartilhar }, '↗  Compartilhar')),
+        ultimo, msg,
+        h('div', { class: 'aj-sep' }),
+        zona, zonaImport,
+        h('details', { class: 'aj-avancado' },
+          h('summary', {}, 'Colar ou copiar como texto'),
+          h('div', { class: 'acoes', style: 'margin:8px 0' }, h('button', { type: 'button', onclick: copiar }, 'Copiar texto dos dados')),
+          caixaTexto,
+          h('div', { class: 'acoes', style: 'margin-top:8px' }, h('button', { type: 'button', onclick: () => caixaTexto.value.trim() && lerTexto(caixaTexto.value) }, 'Ler texto colado')))),
+
+      h('section', { class: 'aj-cartao' },
+        h('h4', {}, 'Atualizar o aplicativo'),
+        h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Baixa a versão mais recente (precisa de internet). Seus lançamentos não são apagados.'),
+        h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: (e) => atualizarApp(e.currentTarget) }, 'Atualizar agora')),
+        h('p', { class: 'nota', style: 'margin:10px 0 0' }, 'Versão instalada: ' + VERSAO_APP)),
     ]);
   }
 

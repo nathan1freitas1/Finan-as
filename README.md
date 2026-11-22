@@ -37,3 +37,6 @@ Abra o endereço publicado no Chrome > menu ⋮ > **Instalar app** (ou Adicionar
 - `db.js`: guarda e lê os dados (IndexedDB). Para sincronizar na nuvem no futuro, a mudança fica concentrada aqui.
 - `app.js`: telas. `styles.css`: visual. `sw.js` e `manifest.webmanifest`: parte instalável e offline.
 - Valores sempre em centavos (inteiros), para não ter erro de arredondamento.
+
+## Importar fatura do cartão (PDF Itaú)
+Em **+ > Importar fatura do cartão (PDF)**. O PDF é lido no próprio aparelho (pdf.js, pasta `vendor/`). O app confere se a soma das compras bate com o total da fatura, marca o que parece já lançado e importa como despesas pendentes no dia do vencimento. O leitor está em `fatura.js`.

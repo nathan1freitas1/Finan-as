@@ -86,7 +86,7 @@ const DB = (function () {
   // ---- backup: tudo num JSON ----
   async function exportar() {
     return JSON.stringify({
-      app: 'meu-caixa', versao: 2,
+      app: 'meu-caixa', versao: 2, geradoEm: new Date().toISOString(),
       config: await lerConfig(),
       lancamentos: await listar('lancamentos'),
       fixos: await listar('fixos'),
@@ -94,19 +94,34 @@ const DB = (function () {
     }, null, 1);
   }
 
-  async function importar(texto) {
-    const d = JSON.parse(texto);
-    if (d.app !== 'meu-caixa' || !Array.isArray(d.lancamentos)) throw new Error('Arquivo não é um backup do Meu Caixa');
+  // lê e confere o texto de um backup, sem mexer em nada
+  function lerBackup(texto) {
+    let d;
+    try { d = JSON.parse(texto); } catch (e) { throw new Error('O arquivo não é um backup do Meu Caixa'); }
+    if (!d || d.app !== 'meu-caixa' || !Array.isArray(d.lancamentos)) throw new Error('O arquivo não é um backup do Meu Caixa');
+    d.config = d.config || {};
+    return d;
+  }
+
+  // modo 'substituir': apaga o que há aqui e coloca o do arquivo.
+  // modo 'juntar': mantém o que há aqui e acrescenta o do arquivo (mesmo registro = vale o do arquivo).
+  async function importar(texto, modo) {
+    const d = lerBackup(texto);
+    const cfgLocal = await lerConfig();
     for (const nome of ['lancamentos', 'fixos', 'excecoes']) {
-      for (const x of await listar(nome)) await excluir(nome, x.id);
+      if (modo !== 'juntar') for (const x of await listar(nome)) await excluir(nome, x.id);
       for (const x of d[nome] || []) await salvar(nome, x); // backup antigo (v1) não tem fixos: tudo bem
     }
-    await salvarConfig('saldoInicial', d.config.saldoInicial || 0);
-    await salvarConfig('saldoDefinido', true);
+    if (modo !== 'juntar' || !cfgLocal.saldoDefinido) {
+      await salvarConfig('saldoInicial', d.config.saldoInicial || 0);
+      await salvarConfig('saldoDefinido', true);
+    }
+    if (d.config.catMemoria) await salvarConfig('catMemoria', modo === 'juntar' ? Object.assign({}, d.config.catMemoria, cfgLocal.catMemoria || {}) : d.config.catMemoria);
+    if (d.config.juros && modo !== 'juntar') await salvarConfig('juros', d.config.juros);
   }
 
   return {
-    init, lerConfig, salvarConfig, exportar, importar,
+    init, lerConfig, salvarConfig, exportar, importar, lerBackup,
     listarLancamentos: () => listar('lancamentos'),
     salvarLancamento: (l) => salvar('lancamentos', l),
     excluirLancamento: (id) => excluir('lancamentos', id),

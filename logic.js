@@ -206,7 +206,7 @@
     { id: 'mercado', nome: 'Mercado', cor: '#e0af68' },
     { id: 'alimentacao', nome: 'Alimentação fora', cor: '#ff9e64' },
     { id: 'combustivel', nome: 'Combustível', cor: '#f7768e' },
-    { id: 'carro', nome: 'Carro', cor: '#bb9af7' },
+    { id: 'carro', nome: 'Carro e transporte', cor: '#bb9af7' },
     { id: 'online', nome: 'Compras online', cor: '#73daca' },
     { id: 'saude', nome: 'Saúde', cor: '#9ece6a' },
     { id: 'educacao', nome: 'Educação', cor: '#7dcfff' },
