@@ -134,8 +134,8 @@ label.campo select { display: block; width: 100%; margin-top: 4px; padding: 12px
 .grupo-val { display: flex; flex-direction: column; align-items: flex-end; font-weight: 600; white-space: nowrap; }
 .grupo-cab .sub { font-size: 12px; color: var(--suave); font-weight: 400; }
 .grupo-cab .seta { color: var(--suave); width: 14px; text-align: center; }
-.barra { display: block; height: 4px; border-radius: 2px; background: var(--card2); margin-top: 4px; overflow: hidden; }
-.barra > span { display: block; height: 100%; border-radius: 2px; }
+.barra-cat { display: block; height: 4px; border-radius: 2px; background: var(--card2); margin-top: 4px; overflow: hidden; }
+.barra-cat > span { display: block; height: 100%; border-radius: 2px; }
 .grupo-corpo { border-top: 1px solid var(--borda); }
 .pagar-tudo { display: block; width: 100%; padding: 12px; color: var(--azul); font-weight: 600; border-top: 1px solid var(--borda); }
 div.campo { display: block; font-size: 13px; color: var(--suave); margin-bottom: 12px; }

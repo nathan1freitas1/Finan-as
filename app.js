@@ -190,7 +190,7 @@
           h('span', { class: 'grupo-meio' },
             h('span', { class: 'grupo-nome' }, g.nome),
             h('span', { class: 'sub' }, g.itens.length + (g.itens.length === 1 ? ' item' : ' itens') + (g.pendentes ? ' · ' + g.pendentes + ' pendente' + (g.pendentes === 1 ? '' : 's') : ' · tudo pago')),
-            pct != null && h('span', { class: 'barra' }, h('span', { style: 'width:' + Math.max(pct, 2) + '%;background:' + g.cor }))),
+            pct != null && h('span', { class: 'barra-cat' }, h('span', { style: 'width:' + Math.max(pct, 2) + '%;background:' + g.cor }))),
           h('span', { class: 'grupo-val' }, L.formatBRL(g.total), pct != null && h('span', { class: 'sub' }, pct + '%')),
           h('span', { class: 'seta' }, aberto ? '▾' : '▸')),
         aberto && h('div', { class: 'grupo-corpo' },
@@ -915,6 +915,24 @@
     await DB.salvarExcecao({ id: excId(alvo.id, chave), fixoId: alvo.id, mes: chave, status: c.status });
   }
 
+  // ---------- atualizar o app ----------
+  // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
+  const VERSAO_APP = '5';
+  async function atualizarApp(btn) {
+    btn.textContent = 'Atualizando…'; btn.disabled = true;
+    try {
+      if (!navigator.onLine) throw new Error('offline');
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) await r.unregister();
+      }
+      if (self.caches) for (const k of await caches.keys()) await caches.delete(k);
+      location.reload();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Sem internet. Tente de novo';
+    }
+  }
+
   // ---------- ajustes ----------
   function abrirAjustes() {
     const inSaldo = h('input', { type: 'text', inputmode: 'decimal', value: L.valorParaInput(estado.cfg.saldoInicial), placeholder: '0,00' });
@@ -968,6 +986,11 @@
       h('div', { class: 'acoes', style: 'margin-top:10px' },
         h('button', { type: 'button', onclick: exportar }, 'Exportar'),
         h('button', { type: 'button', onclick: (e) => importar(e.currentTarget) }, 'Importar')),
+      h('div', { class: 'sep' }),
+      h('h3', {}, 'Atualizar o aplicativo'),
+      h('p', { class: 'nota' }, 'Baixa a versão mais recente (precisa de internet). Seus lançamentos não são apagados.'),
+      h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: (e) => atualizarApp(e.currentTarget) }, 'Atualizar agora')),
+      h('p', { class: 'nota' }, 'Versão instalada: ' + VERSAO_APP),
     ]);
   }
 
