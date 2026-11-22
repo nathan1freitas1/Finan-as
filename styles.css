@@ -110,3 +110,15 @@ label.campo textarea { font-size: 12px; min-height: 90px; font-family: ui-monosp
 .legenda-graf { display: flex; gap: 16px; font-size: 12px; color: var(--suave); margin-top: 8px; }
 .legenda-graf .dot { width: 10px; height: 10px; border-radius: 50%; }
 .aviso-btn { display: block; width: 100%; text-align: left; }
+
+/* campo de valor + somador */
+.campo .valor-topo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.campo .valor-topo .somar { color: var(--azul); font-weight: 600; font-size: 13px; padding: 4px 0; }
+div.campo > input[type=text] { display: block; width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--borda); background: var(--card2); color: var(--texto); font-size: 17px; }
+div.campo > input.valor-grande { font-size: 26px; }
+.soma-linha { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-bottom: 10px; }
+.soma-linha input { width: 100%; min-width: 0; padding: 12px; border-radius: 12px; border: 1px solid var(--borda); background: var(--card2); color: var(--texto); }
+.soma-lista { max-height: 28vh; overflow: auto; }
+.soma-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--borda); }
+.soma-item button { color: var(--suave); font-size: 22px; padding: 0 10px; }
+.soma-total { font-weight: 700; font-size: 18px; margin: 12px 0 6px; }

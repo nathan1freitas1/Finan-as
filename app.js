@@ -421,6 +421,60 @@
     return () => fundo.remove();
   }
 
+
+  // ---------- campo de valor com somador ----------
+  // Botão "Somar" abre uma lista: vai adicionando valores soltos e usa o total no campo.
+  function abrirSomador(inValor) {
+    let itens = [];
+    const atual = L.parseValor(inValor.value);
+    if (atual > 0) itens.push(atual);
+    const inNovo = h('input', { type: 'text', inputmode: 'decimal', class: 'valor-grande', placeholder: '0,00' });
+    const lista = h('div', { class: 'soma-lista' });
+    const totalEl = h('div', { class: 'soma-total' });
+    const erro = h('div', { class: 'erro' });
+    let fechar;
+    function desenhar() {
+      lista.replaceChildren(...itens.map((v, i) => h('div', { class: 'soma-item' },
+        h('span', {}, L.formatBRL(v)),
+        h('button', { type: 'button', 'aria-label': 'Remover', onclick: () => { itens.splice(i, 1); desenhar(); inNovo.focus(); } }, '×'))));
+      const total = itens.reduce((a, b) => a + b, 0);
+      totalEl.textContent = 'Total (' + itens.length + (itens.length === 1 ? ' valor' : ' valores') + '): ' + L.formatBRL(total);
+    }
+    function adicionar() {
+      const v = L.parseValor(inNovo.value);
+      if (!v || v <= 0) { if (inNovo.value.trim() !== '') erro.textContent = 'Valor inválido.'; return false; }
+      erro.textContent = '';
+      itens.push(v); inNovo.value = ''; desenhar(); inNovo.focus();
+      return true;
+    }
+    inNovo.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } });
+    function usar() {
+      if (inNovo.value.trim() !== '' && !adicionar()) return; // não perde o que está digitado
+      const total = itens.reduce((a, b) => a + b, 0);
+      if (!(total > 0)) { erro.textContent = 'Adicione ao menos um valor.'; return; }
+      inValor.value = L.valorParaInput(total);
+      inValor.dispatchEvent(new Event('input', { bubbles: true }));
+      fechar();
+    }
+    fechar = abrirFolha([
+      h('h3', {}, 'Somar valores'),
+      h('p', { class: 'nota' }, 'Digite cada valor e toque em Adicionar. No fim, o total vira o valor do lançamento.'),
+      h('div', { class: 'soma-linha' }, inNovo, h('button', { type: 'button', class: 'primario', onclick: adicionar }, 'Adicionar')),
+      lista, totalEl, erro,
+      h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: () => fechar() }, 'Cancelar'),
+        h('button', { type: 'button', class: 'primario', onclick: usar }, 'Usar total')),
+    ]);
+    desenhar();
+    setTimeout(() => inNovo.focus(), 50);
+  }
+
+  function campoValor(inValor) {
+    return h('div', { class: 'campo' },
+      h('div', { class: 'valor-topo' }, h('span', {}, 'Valor'),
+        h('button', { type: 'button', class: 'somar', onclick: () => abrirSomador(inValor) }, '＋ Somar valores')),
+      inValor);
+  }
+
   // confirmação em dois toques, para ações que não têm desfazer
   function doisToques(btn, textoConfirma, acao) {
     if (btn.dataset.confirma !== '1') { btn.dataset.confirma = '1'; btn.dataset.original = btn.textContent; btn.textContent = textoConfirma; return; }
@@ -442,8 +496,6 @@
     const inPago = h('input', { type: 'checkbox' });
     inPago.checked = existente ? existente.status === 'pago' : L.statusPadrao(inData.value, hoje) === 'pago';
     const txtData = h('span', {}, 'Data');
-    const inFim = h('input', { type: 'month' });
-    const blocoFim = h('label', { class: 'campo', style: 'display:none' }, 'Até quando (opcional, deixe vazio para sem fim)', inFim);
     const erro = h('div', { class: 'erro' });
     // parcelado
     let modoParcela = 'parcela';
@@ -496,10 +548,9 @@
       btnUnica.className = r === 'unica' ? 'on neutro' : '';
       btnFixa.className = r === 'fixa' ? 'on neutro' : '';
       btnParc.className = r === 'parcelada' ? 'on neutro' : '';
-      blocoFim.style.display = r === 'fixa' ? '' : 'none';
       blocoParcelas.style.display = r === 'parcelada' ? '' : 'none';
       linhaPago.style.display = r === 'parcelada' ? 'none' : ''; // parcelas seguem a data: passada = paga, futura = pendente
-      txtData.textContent = r === 'fixa' ? 'Primeiro vencimento (o dia se repete todo mês)'
+      txtData.textContent = r === 'fixa' ? 'Primeiro vencimento (repete todo mês até você excluir)'
         : r === 'parcelada' ? 'Data da primeira parcela (as outras seguem mês a mês)' : 'Data';
       // fixo começa pendente: valor e data podem variar, você confirma quando pagar
       if (!tocouPago) inPago.checked = r === 'fixa' ? false : L.statusPadrao(inData.value, hoje) === 'pago';
@@ -532,9 +583,7 @@
 
       if (!existente && repet === 'fixa') {
         const inicio = inData.value.slice(0, 7);
-        const fim = inFim.value || null;
-        if (fim && fim < inicio) { erro.textContent = 'O fim não pode ser antes do primeiro vencimento.'; return; }
-        const f = await DB.salvarFixo({ tipo, valor, descricao, dia: +inData.value.slice(8, 10), inicio, fim });
+        const f = await DB.salvarFixo({ tipo, valor, descricao, dia: +inData.value.slice(8, 10), inicio, fim: null });
         if (inPago.checked) await DB.salvarExcecao({ id: excId(f.id, inicio), fixoId: f.id, mes: inicio, status: 'pago' });
         fechar();
         estado.ano = +inicio.slice(0, 4); estado.mes = +inicio.slice(5, 7);
@@ -557,10 +606,9 @@
       h('h3', {}, existente ? 'Editar lançamento' : 'Novo lançamento'),
       h('div', { class: 'seg' }, btnRec, btnDes),
       !existente && h('div', { class: 'seg tres' }, btnUnica, btnFixa, btnParc),
-      h('label', { class: 'campo' }, 'Valor', inValor),
+      campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
       h('label', { class: 'campo' }, txtData, inData),
-      blocoFim,
       blocoParcelas,
       linhaPago,
       erro,
@@ -646,7 +694,7 @@
 
     fechar = abrirFolha([
       h('h3', {}, 'Parcela ' + l.parcela + ' de ' + l.parcelaTotal),
-      h('label', { class: 'campo' }, 'Valor', inValor),
+      campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
       h('label', { class: 'campo' }, 'Data', inData),
       h('label', { class: 'linha' }, inPago, 'Já foi pago/recebido'),
@@ -746,7 +794,7 @@
 
     fechar = abrirFolha([
       h('h3', {}, 'Fixo · ' + nomeMes),
-      h('label', { class: 'campo' }, 'Valor', inValor),
+      campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
       h('label', { class: 'linha' }, inPago, 'Já foi pago/recebido'),
       erro,
