@@ -43,11 +43,32 @@
     return L.todosLancamentos(estado.lancs, estado.fixos, estado.excecoes, ate);
   }
 
+  // No dia do vencimento, o que estava pendente vira pago sozinho (o dinheiro sai da conta nesse dia).
+  async function autoPagar() {
+    const hoje = L.hojeISO();
+    if (!estado.cfg.autoPagoDesde) { // primeira vez: só vale para datas daqui pra frente
+      await DB.salvarConfig('autoPagoDesde', hoje);
+      estado.cfg.autoPagoDesde = hoje;
+    }
+    const r = L.vencidosPendentes(estado.lancs, estado.fixos, estado.excecoes, hoje, estado.cfg.autoPagoDesde);
+    for (const l of r.lancs) { l.status = 'pago'; await DB.salvarLancamento(l); }
+    for (const x of r.fixos) {
+      const e = excDe(x.fixoId, x.mes); e.status = 'pago'; await DB.salvarExcecao(e);
+      if (!estado.excecoes.includes(e)) estado.excecoes.push(e);
+    }
+    return r.lancs.length + r.fixos.length > 0;
+  }
+
   async function recarregar() {
     estado.lancs = await DB.listarLancamentos();
     estado.fixos = await DB.listarFixos();
     estado.excecoes = await DB.listarExcecoes();
     estado.cfg = await DB.lerConfig();
+    if (await autoPagar()) {
+      estado.lancs = await DB.listarLancamentos();
+      estado.excecoes = await DB.listarExcecoes();
+    }
+    if (estado.agrupar === undefined) estado.agrupar = estado.cfg.visao === 'categorias';
     if (!estado.jurosCarregado) {
       if (estado.cfg.juros) Object.assign(estado.juros, estado.cfg.juros);
       estado.jurosCarregado = true;
@@ -71,6 +92,7 @@
       await DB.salvarExcecao(e);
     } else {
       l.status = novo;
+      if (novo === 'pendente') l.manualPendente = true; else delete l.manualPendente; // desmarcou de propósito: não paga sozinho
       await DB.salvarLancamento(l);
     }
     await recarregar();
@@ -128,14 +150,54 @@
         h('div', { class: 'chips' },
           h('button', { class: 'chip' + (estado.soPendentes ? '' : ' on'), onclick: () => { estado.soPendentes = false; desenhar(); } }, 'Todos'),
           h('button', { class: 'chip' + (estado.soPendentes ? ' on' : ''), onclick: () => { estado.soPendentes = true; desenhar(); } }, 'Pendentes'))),
+      h('div', { class: 'seg' },
+        h('button', { class: estado.agrupar ? '' : 'on neutro', onclick: () => trocarVisao(false) }, 'Lista'),
+        h('button', { class: estado.agrupar ? 'on neutro' : '', onclick: () => trocarVisao(true) }, 'Por categoria')),
       itens.length
-        ? h('div', { class: 'lista' }, itens.map(linhaItem))
+        ? (estado.agrupar ? visaoCategorias(itens) : h('div', { class: 'lista' }, itens.map(linhaItem)))
         : h('div', { class: 'lista' }, h('div', { class: 'vazio' },
           doMes.length ? 'Nenhum lançamento com esse filtro.' : 'Nada lançado neste mês.\nToque no + para começar.')),
 
       h('button', { class: 'fab', 'aria-label': 'Novo lançamento', onclick: () => abrirFormulario(null) }, '+'),
       barraInferior()
     ].filter(Boolean)); // tira os "false"/"null" dos avisos que não se aplicam
+  }
+
+  async function trocarVisao(agrupar) {
+    estado.agrupar = agrupar;
+    await DB.salvarConfig('visao', agrupar ? 'categorias' : 'lista');
+    estado.cfg.visao = agrupar ? 'categorias' : 'lista';
+    desenhar();
+  }
+
+  // despesas agrupadas por categoria (toque abre) + receitas num grupo só
+  function visaoCategorias(itens) {
+    estado.abertas = estado.abertas || new Set();
+    const despesas = itens.filter((l) => l.tipo === 'despesa');
+    const receitas = itens.filter((l) => l.tipo === 'receita');
+    const totalDes = despesas.reduce((s, l) => s + l.valor, 0) || 1;
+    const grupos = L.agruparPorCategoria(despesas).map((g) => Object.assign(g, { chave: 'd:' + g.id, sinal: '−' }));
+    if (receitas.length) {
+      grupos.push({ chave: 'receitas', nome: 'Receitas', cor: '#6fc7a1', itens: receitas, total: receitas.reduce((s, l) => s + l.valor, 0),
+        pendentes: receitas.filter((l) => l.status === 'pendente').length, sinal: '+' });
+    }
+    return h('div', { class: 'grupos' }, grupos.map((g) => {
+      const aberto = estado.abertas.has(g.chave);
+      const pct = g.sinal === '−' ? Math.round((g.total / totalDes) * 100) : null;
+      return h('div', { class: 'grupo' },
+        h('button', { class: 'grupo-cab', 'aria-expanded': String(aberto), onclick: () => { aberto ? estado.abertas.delete(g.chave) : estado.abertas.add(g.chave); desenhar(); } },
+          h('span', { class: 'ponto', style: 'background:' + g.cor }),
+          h('span', { class: 'grupo-meio' },
+            h('span', { class: 'grupo-nome' }, g.nome),
+            h('span', { class: 'sub' }, g.itens.length + (g.itens.length === 1 ? ' item' : ' itens') + (g.pendentes ? ' · ' + g.pendentes + ' pendente' + (g.pendentes === 1 ? '' : 's') : ' · tudo pago')),
+            pct != null && h('span', { class: 'barra' }, h('span', { style: 'width:' + Math.max(pct, 2) + '%;background:' + g.cor }))),
+          h('span', { class: 'grupo-val' }, L.formatBRL(g.total), pct != null && h('span', { class: 'sub' }, pct + '%')),
+          h('span', { class: 'seta' }, aberto ? '▾' : '▸')),
+        aberto && h('div', { class: 'grupo-corpo' },
+          g.itens.map(linhaItem),
+          g.pendentes > 0 && h('button', { class: 'pagar-tudo', onclick: () => pagarTudo(g.itens) },
+            (g.sinal === '+' ? 'Marcar tudo como recebido' : 'Marcar tudo como pago') + ' (' + g.pendentes + ')')));
+    }));
   }
 
   // ---------- balanço do mês: gráfico redondo ----------
@@ -409,7 +471,7 @@
       }, pago ? '✓' : ''),
       h('div', { class: 'meio' },
         h('div', { class: 'desc' }, L.rotulo(l)),
-        h('div', { class: 'sub' }, L.formatData(l.data) + (l.fixo ? ' · fixo' : '') + (pago ? '' : ' · pendente'))),
+        h('div', { class: 'sub' }, L.formatData(l.data) + (l.fixo ? ' · fixo' : '') + (l.categoria && !estado.agrupar ? ' · ' + L.categoriaDe(l.categoria).nome : '') + (pago ? '' : ' · pendente'))),
       h('div', { class: 'val ' + (sinal > 0 ? 'pos' : 'neg') }, (sinal > 0 ? '+' : '') + L.formatBRL(sinal * l.valor)));
   }
 
@@ -421,6 +483,24 @@
     return () => fundo.remove();
   }
 
+
+  // ---------- categoria ----------
+  function campoCategoria(inicial) {
+    const sel = h('select', {}, h('option', { value: '' }, 'Sem categoria'),
+      ...L.CATEGORIAS.map((c) => h('option', { value: c.id }, c.nome)));
+    sel.value = inicial || '';
+    const el = h('label', { class: 'campo' }, 'Categoria', sel);
+    return { el, sel, valor: () => sel.value || null };
+  }
+
+  async function pagarTudo(itens) {
+    for (const l of itens) {
+      if (l.status !== 'pendente') continue;
+      if (l.fixo) { const e = excDe(l.fixoId, l.mes); e.status = 'pago'; await DB.salvarExcecao(e); }
+      else { const x = estado.lancs.find((y) => y.id === l.id); x.status = 'pago'; delete x.manualPendente; await DB.salvarLancamento(x); }
+    }
+    await recarregar();
+  }
 
   // ---------- campo de valor com somador ----------
   // Botão "Somar" abre uma lista: vai adicionando valores soltos e usa o total no campo.
@@ -496,6 +576,7 @@
     const inPago = h('input', { type: 'checkbox' });
     inPago.checked = existente ? existente.status === 'pago' : L.statusPadrao(inData.value, hoje) === 'pago';
     const txtData = h('span', {}, 'Data');
+    const catNovo = campoCategoria(existente && existente.categoria);
     const erro = h('div', { class: 'erro' });
     // parcelado
     let modoParcela = 'parcela';
@@ -537,6 +618,7 @@
       btnRec.className = tipo === 'receita' ? 'on receita' : '';
       btnDes.className = tipo === 'despesa' ? 'on despesa' : '';
       inDesc.placeholder = tipo === 'receita' ? 'Ex.: Salário' : 'Ex.: Mercado';
+      catNovo.el.style.display = tipo === 'despesa' ? '' : 'none';
     }
     trocarTipo(tipo);
 
@@ -565,6 +647,7 @@
       if (!valor || valor <= 0) { erro.textContent = 'Informe um valor maior que zero.'; return; }
       if (!inData.value) { erro.textContent = 'Informe a data.'; return; }
       const descricao = inDesc.value.trim() || (tipo === 'receita' ? 'Receita' : 'Despesa');
+      const categoria = tipo === 'despesa' ? catNovo.valor() : null;
 
       if (!existente && repet === 'parcelada') {
         const n = parseInt(inParcelas.value, 10);
@@ -573,7 +656,7 @@
         if (ps.some((p) => p.valor <= 0)) { erro.textContent = 'O valor total é pequeno demais para esse número de parcelas.'; return; }
         const grupoId = (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2);
         for (const p of ps) {
-          await DB.salvarLancamento({ tipo, valor: p.valor, descricao, data: p.data, status: L.statusPadrao(p.data, hoje), grupoId, parcela: p.parcela, parcelaTotal: n });
+          await DB.salvarLancamento({ tipo, valor: p.valor, descricao, data: p.data, status: L.statusPadrao(p.data, hoje), grupoId, parcela: p.parcela, parcelaTotal: n, categoria: categoria });
         }
         fechar();
         estado.ano = +inData.value.slice(0, 4); estado.mes = +inData.value.slice(5, 7);
@@ -583,8 +666,9 @@
 
       if (!existente && repet === 'fixa') {
         const inicio = inData.value.slice(0, 7);
-        const f = await DB.salvarFixo({ tipo, valor, descricao, dia: +inData.value.slice(8, 10), inicio, fim: null });
-        if (inPago.checked) await DB.salvarExcecao({ id: excId(f.id, inicio), fixoId: f.id, mes: inicio, status: 'pago' });
+        const f = await DB.salvarFixo({ tipo, valor, descricao, dia: +inData.value.slice(8, 10), inicio, fim: null, categoria });
+        // 1º vencimento que já chegou e foi deixado como pendente: fica pendente de propósito, não paga sozinho
+        if (inPago.checked || inData.value <= hoje) await DB.salvarExcecao({ id: excId(f.id, inicio), fixoId: f.id, mes: inicio, status: inPago.checked ? 'pago' : 'pendente' });
         fechar();
         estado.ano = +inicio.slice(0, 4); estado.mes = +inicio.slice(5, 7);
         await recarregar();
@@ -592,7 +676,8 @@
       }
 
       const l = existente || {};
-      Object.assign(l, { tipo, valor, descricao, data: inData.value, status: inPago.checked ? 'pago' : 'pendente' });
+      Object.assign(l, { tipo, valor, descricao, data: inData.value, status: inPago.checked ? 'pago' : 'pendente', categoria });
+      if (!inPago.checked && inData.value <= hoje) l.manualPendente = true; else delete l.manualPendente;
       await DB.salvarLancamento(l);
       fechar();
       estado.ano = +l.data.slice(0, 4); estado.mes = +l.data.slice(5, 7);
@@ -608,6 +693,7 @@
       !existente && h('div', { class: 'seg tres' }, btnUnica, btnFixa, btnParc),
       campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
+      catNovo.el,
       h('label', { class: 'campo' }, txtData, inData),
       blocoParcelas,
       linhaPago,
@@ -625,6 +711,7 @@
     const inData = h('input', { type: 'date', value: l.data });
     const inPago = h('input', { type: 'checkbox' });
     inPago.checked = l.status === 'pago';
+    const catP = campoCategoria(l.categoria);
     const erro = h('div', { class: 'erro' });
     const zona = h('div');
     let fechar;
@@ -634,7 +721,7 @@
       if (!valor || valor <= 0) { erro.textContent = 'Informe um valor maior que zero.'; return null; }
       if (!inData.value) { erro.textContent = 'Informe a data.'; return null; }
       erro.textContent = '';
-      return { valor, descricao: inDesc.value.trim() || l.descricao, data: inData.value, status: inPago.checked ? 'pago' : 'pendente' };
+      return { valor, descricao: inDesc.value.trim() || l.descricao, data: inData.value, status: inPago.checked ? 'pago' : 'pendente', categoria: catP.valor() };
     }
 
     async function aplicar(escopo) {
@@ -642,11 +729,12 @@
       if (!c) { mostrar('botoes'); return; }
       const alvo = estado.lancs.find((x) => x.id === l.id);
       alvo.data = c.data; alvo.status = c.status; // data e "pago" valem só para esta parcela
-      alvo.valor = c.valor; alvo.descricao = c.descricao;
+      alvo.valor = c.valor; alvo.descricao = c.descricao; alvo.categoria = c.categoria;
+      if (c.status === 'pendente' && c.data <= L.hojeISO()) alvo.manualPendente = true; else delete alvo.manualPendente;
       await DB.salvarLancamento(alvo);
       if (escopo === 'seguintes') {
         for (const x of grupo.filter((g) => g.parcela > l.parcela)) {
-          x.valor = c.valor; x.descricao = c.descricao;
+          x.valor = c.valor; x.descricao = c.descricao; x.categoria = c.categoria;
           await DB.salvarLancamento(x);
         }
       }
@@ -656,7 +744,7 @@
     async function salvar() {
       const c = lerCampos();
       if (!c) return;
-      if (c.valor === l.valor && c.descricao === l.descricao) await aplicar('esta');
+      if (c.valor === l.valor && c.descricao === l.descricao && c.categoria === (l.categoria || null)) await aplicar('esta');
       else if (grupo.some((g) => g.parcela > l.parcela)) mostrar('escopo');
       else await aplicar('esta');
     }
@@ -696,6 +784,7 @@
       h('h3', {}, 'Parcela ' + l.parcela + ' de ' + l.parcelaTotal),
       campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
+      catP.el,
       h('label', { class: 'campo' }, 'Data', inData),
       h('label', { class: 'linha' }, inPago, 'Já foi pago/recebido'),
       erro,
@@ -711,6 +800,7 @@
     const inDesc = h('input', { type: 'text', value: l.descricao });
     const inPago = h('input', { type: 'checkbox' });
     inPago.checked = l.status === 'pago';
+    const catF = campoCategoria(f.categoria);
     const erro = h('div', { class: 'erro' });
     const zona = h('div');
     const nomeMes = L.MESES[+l.mes.slice(5, 7) - 1];
@@ -726,6 +816,7 @@
     async function salvar() {
       const c = lerCampos();
       if (!c) return;
+      if (catF.valor() !== (f.categoria || null)) { f.categoria = catF.valor(); await DB.salvarFixo(f); } // categoria vale para o fixo todo
       if (c.valor === l.valor && c.descricao === l.descricao) { // só mudou o "pago"
         const e = excDe(f.id, l.mes);
         e.status = c.status;
@@ -796,6 +887,7 @@
       h('h3', {}, 'Fixo · ' + nomeMes),
       campoValor(inValor),
       h('label', { class: 'campo' }, 'Descrição', inDesc),
+      l.tipo === 'despesa' && catF.el,
       h('label', { class: 'linha' }, inPago, 'Já foi pago/recebido'),
       erro,
       zona,
@@ -813,7 +905,7 @@
       const fimOriginal = f.fim;
       f.fim = L.chaveAnterior(chave);
       await DB.salvarFixo(f);
-      alvo = await DB.salvarFixo({ tipo: f.tipo, valor: c.valor, descricao: c.descricao, dia: f.dia, inicio: chave, fim: fimOriginal });
+      alvo = await DB.salvarFixo({ tipo: f.tipo, valor: c.valor, descricao: c.descricao, dia: f.dia, inicio: chave, fim: fimOriginal, categoria: f.categoria || null });
       for (const e of futuras) { // pagos/pulados dos meses seguintes acompanham o fixo novo
         await DB.excluirExcecao(e.id);
         await DB.salvarExcecao(Object.assign({}, e, { id: excId(alvo.id, e.mes), fixoId: alvo.id }));

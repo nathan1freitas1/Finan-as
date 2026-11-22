@@ -177,6 +177,7 @@
           descricao: e.descricao || f.descricao,
           data: dataDoFixo(f, ch),
           status: e.status || 'pendente',
+          categoria: f.categoria || null,
           criadoEm: 0,
         });
       }
@@ -197,6 +198,55 @@
       out.push({ parcela: i + 1, valor: base + (i < resto ? 1 : 0), data: dataDoFixo({ dia }, ch) });
     }
     return out;
+  }
+
+  // ---------- categorias (só despesas) ----------
+  const CATEGORIAS = [
+    { id: 'moradia', nome: 'Moradia', cor: '#7aa2f7' },
+    { id: 'mercado', nome: 'Mercado', cor: '#e0af68' },
+    { id: 'alimentacao', nome: 'Alimentação fora', cor: '#ff9e64' },
+    { id: 'combustivel', nome: 'Combustível', cor: '#f7768e' },
+    { id: 'carro', nome: 'Carro', cor: '#bb9af7' },
+    { id: 'online', nome: 'Compras online', cor: '#73daca' },
+    { id: 'saude', nome: 'Saúde', cor: '#9ece6a' },
+    { id: 'educacao', nome: 'Educação', cor: '#7dcfff' },
+    { id: 'lazer', nome: 'Lazer', cor: '#c792ea' },
+    { id: 'outros', nome: 'Outros', cor: '#8b8b93' },
+  ];
+  const SEM_CATEGORIA = { id: '', nome: 'Sem categoria', cor: '#5a5a62' };
+  const categoriaDe = (id) => CATEGORIAS.find((c) => c.id === id) || SEM_CATEGORIA;
+
+  // agrupa por categoria; maior total primeiro, "Sem categoria" por último
+  function agruparPorCategoria(itens) {
+    const mapa = {};
+    itens.forEach((l) => {
+      const c = categoriaDe(l.categoria);
+      const g = mapa[c.id] || (mapa[c.id] = { id: c.id, nome: c.nome, cor: c.cor, itens: [], total: 0, pendentes: 0 });
+      g.itens.push(l); g.total += l.valor; if (l.status === 'pendente') g.pendentes++;
+    });
+    return Object.values(mapa).sort((a, b) => (a.id === '') - (b.id === '') || b.total - a.total);
+  }
+
+  // Itens pendentes cuja data já chegou: viram "pago" sozinhos. Só vale para datas depois de `desde`
+  // (o dia em que o recurso foi ligado), para não mexer no que já estava pendente antes.
+  // Respeita o que a pessoa desmarcou de propósito (manualPendente / status explícito na exceção).
+  function vencidosPendentes(lancs, fixos, excecoes, hoje, desde) {
+    const exc = {};
+    (excecoes || []).forEach((e) => { exc[e.id] = e; });
+    const outL = lancs.filter((l) => l.status === 'pendente' && !l.manualPendente && l.data > desde && l.data <= hoje);
+    const outF = [];
+    const ate = chaveParaIdx(hoje.slice(0, 7));
+    fixos.forEach((f) => {
+      const fim = f.fim ? Math.min(chaveParaIdx(f.fim), ate) : ate;
+      for (let i = Math.max(chaveParaIdx(f.inicio), chaveParaIdx(desde.slice(0, 7))); i <= fim; i++) {
+        const ch = idxParaChave(i);
+        const e = exc[f.id + '|' + ch] || {};
+        if (e.pulado || e.status) continue;
+        const d = dataDoFixo(f, ch);
+        if (d > desde && d <= hoje) outF.push({ fixoId: f.id, mes: ch });
+      }
+    });
+    return { lancs: outL, fixos: outF };
   }
 
   const rotulo = (l) => (l.parcelaTotal ? l.descricao + ' (' + l.parcela + '/' + l.parcelaTotal + ')' : l.descricao);
@@ -238,5 +288,5 @@
 
   const todosLancamentos = (lancs, fixos, excecoes, ateChave) => lancs.concat(expandirFixos(fixos, excecoes, ateChave));
 
-  return { parsePercentual, textoPrazo, rotuloMeses, simularJuros, composicaoMes, previsao, resumoPrevisao, compacto, balancoMes, filtrar, gerarParcelas, rotulo, chaveParaIdx, idxParaChave, chaveAnterior, chaveProxima, dataDoFixo, expandirFixos, todosLancamentos, MESES, sinal, hojeISO, chaveMes, ultimoDia, statusPadrao, saldoAtual, saldoPrevistoFimMes, doMes, resumoMes, formatBRL, parseValor, valorParaInput, formatData };
+  return { CATEGORIAS, categoriaDe, agruparPorCategoria, vencidosPendentes, parsePercentual, textoPrazo, rotuloMeses, simularJuros, composicaoMes, previsao, resumoPrevisao, compacto, balancoMes, filtrar, gerarParcelas, rotulo, chaveParaIdx, idxParaChave, chaveAnterior, chaveProxima, dataDoFixo, expandirFixos, todosLancamentos, MESES, sinal, hojeISO, chaveMes, ultimoDia, statusPadrao, saldoAtual, saldoPrevistoFimMes, doMes, resumoMes, formatBRL, parseValor, valorParaInput, formatData };
 });
