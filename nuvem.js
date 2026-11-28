@@ -75,7 +75,19 @@
   const criar = (tabela, linha) => api('POST', tabela, linha, { Prefer: 'return=representation' });
   const mudar = (tabela, filtro, campos) => api('PATCH', tabela + '?' + filtro, campos, { Prefer: 'return=representation' });
   const apagar = (tabela, filtro) => api('DELETE', tabela + '?' + filtro);
+  // grava ou atualiza (pela chave primária)
+  const gravar = (tabela, linha) => api('POST', tabela, linha, { Prefer: 'resolution=merge-duplicates,return=minimal' });
+  // lê tudo, de 1000 em 1000 (limite do servidor)
+  async function lerTudo(tabela, filtro) {
+    const out = [];
+    for (let i = 0; i < 50; i++) {
+      const p = await ler(tabela, 'select=*' + (filtro ? '&' + filtro : '') + '&order=id&limit=1000&offset=' + (i * 1000));
+      out.push(...p);
+      if (p.length < 1000) break;
+    }
+    return out;
+  }
   const rpc = (nome, args) => api('POST', 'rpc/' + nome, args || {});
 
-  root.Nuvem = { entrar, cadastrar, sair, logado, email, meuId, ler, criar, mudar, apagar, rpc };
+  root.Nuvem = { entrar, cadastrar, sair, logado, email, meuId, ler, lerTudo, criar, mudar, apagar, gravar, rpc };
 })(typeof window !== 'undefined' ? window : globalThis);

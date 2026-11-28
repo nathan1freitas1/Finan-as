@@ -2,11 +2,14 @@
    O resto do app só fala com este objeto; trocar por banco online depois é mexer só aqui. */
 const DBLocal = (function () {
   const NOME = 'meucaixa';
-  const VERSAO = 2; // v2 acrescentou 'fixos' e 'excecoes'
-  const STORES = { lancamentos: 'id', config: 'chave', fixos: 'id', excecoes: 'id' };
+  const VERSAO = 3; // v2 acrescentou 'fixos' e 'excecoes'; v3 acrescentou 'apagados' (lista de exclusões, para a sincronização)
+  const STORES = { lancamentos: 'id', config: 'chave', fixos: 'id', excecoes: 'id', apagados: 'k' };
+  // configurações que viajam para a nuvem quando a sincronização do Privado está ligada
+  const CFG_SYNC = ['saldoInicial', 'saldoDefinido', 'autoPagoDesde', 'catMemoria', 'juros'];
+  let aoMudar = null; // a sincronização se registra aqui para ser avisada de cada alteração
   let db = null;
   let emMemoria = false;
-  const mem = { lancamentos: [], fixos: [], excecoes: [], config: {} };
+  const mem = { lancamentos: [], fixos: [], excecoes: [], config: {}, apagados: [] };
 
   const novoId = () =>
     (self.crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(16).slice(2));
@@ -52,20 +55,35 @@ const DBLocal = (function () {
     return pedido(store, 'readonly', (s) => s.getAll());
   }
 
-  async function salvar(store, obj) {
-    if (!obj.id) { obj.id = novoId(); obj.criadoEm = Date.now(); }
+  // grava sem carimbar nem avisar a sincronização (usado por ela mesma ao aplicar o que veio da nuvem)
+  async function gravarCru(store, obj) {
+    if (emMemoria && store === 'config') { mem.config[obj.chave] = obj.valor; return obj; }
     if (emMemoria) {
-      const i = mem[store].findIndex((x) => x.id === obj.id);
+      const i = mem[store].findIndex((x) => x[STORES[store]] === obj[STORES[store]]);
       if (i >= 0) mem[store][i] = obj; else mem[store].push(obj);
       return obj;
     }
     await pedido(store, 'readwrite', (s) => s.put(obj));
     return obj;
   }
+  async function apagarCru(store, chave) {
+    if (emMemoria) { mem[store] = mem[store].filter((x) => x[STORES[store]] !== chave); return; }
+    await pedido(store, 'readwrite', (s) => s.delete(chave));
+  }
+
+  async function salvar(store, obj) {
+    if (!obj.id) { obj.id = novoId(); obj.criadoEm = Date.now(); }
+    obj.atualizadoEm = Date.now();
+    await gravarCru(store, obj);
+    await apagarCru('apagados', store + ':' + obj.id); // recriado depois de apagado: vale o novo
+    if (aoMudar) aoMudar();
+    return obj;
+  }
 
   async function excluir(store, id) {
-    if (emMemoria) { mem[store] = mem[store].filter((x) => x.id !== id); return; }
-    await pedido(store, 'readwrite', (s) => s.delete(id));
+    await apagarCru(store, id);
+    await gravarCru('apagados', { k: store + ':' + id, tabela: store, id, em: Date.now() });
+    if (aoMudar) aoMudar();
   }
 
   // ---- config ----
@@ -79,15 +97,24 @@ const DBLocal = (function () {
   }
 
   async function salvarConfig(chave, valor) {
-    if (emMemoria) { mem.config[chave] = valor; return; }
-    await pedido('config', 'readwrite', (s) => s.put({ chave, valor }));
+    await gravarCru('config', { chave, valor });
+    if (CFG_SYNC.includes(chave)) {
+      const em = await cfgEm(); em[chave] = Date.now();
+      await gravarCru('config', { chave: 'syncEm', valor: em });
+      if (aoMudar) aoMudar();
+    }
+  }
+  // quando cada configuração sincronizável mudou pela última vez
+  async function cfgEm() {
+    const l = (await lerConfig()).syncEm;
+    return Object.assign({}, l || {});
   }
 
   // ---- backup: tudo num JSON ----
   async function exportar() {
     return JSON.stringify({
       app: 'meu-caixa', versao: 2, geradoEm: new Date().toISOString(),
-      config: await lerConfig(),
+      config: Object.assign(await lerConfig(), { syncEm: undefined }),
       lancamentos: await listar('lancamentos'),
       fixos: await listar('fixos'),
       excecoes: await listar('excecoes'),
@@ -120,8 +147,29 @@ const DBLocal = (function () {
     if (d.config.juros && modo !== 'juntar') await salvarConfig('juros', d.config.juros);
   }
 
+  // ---- ganchos da sincronização (sync.js) ----
+  const sync = {
+    avisarMudancas: (fn) => { aoMudar = fn; },
+    CFG_SYNC,
+    listarCru: (store) => listar(store),
+    aplicar: (store, obj) => gravarCru(store, obj),
+    removerSemMarca: (store, id) => apagarCru(store, id),
+    apagados: () => listar('apagados'),
+    esquecerApagados: async (chaves) => { for (const k of chaves) await apagarCru('apagados', k); },
+    cfgEm,
+    configSalva: async () => { // só o que foi de fato gravado, sem os valores padrão
+      if (emMemoria) return Object.assign({}, mem.config);
+      const o = {}; (await pedido('config', 'readonly', (s) => s.getAll())).forEach((x) => { o[x.chave] = x.valor; }); return o;
+    },
+    aplicarConfig: async (chave, valor, em) => {
+      await gravarCru('config', { chave, valor });
+      const m = await cfgEm(); m[chave] = em;
+      await gravarCru('config', { chave: 'syncEm', valor: m });
+    },
+  };
+
   return {
-    init, lerConfig, salvarConfig, exportar, importar, lerBackup,
+    init, lerConfig, salvarConfig, exportar, importar, lerBackup, sync,
     listarLancamentos: () => listar('lancamentos'),
     salvarLancamento: (l) => salvar('lancamentos', l),
     excluirLancamento: (id) => excluir('lancamentos', id),

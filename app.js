@@ -1092,7 +1092,7 @@
 
   // ---------- atualizar o app ----------
   // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
-  const VERSAO_APP = '10';
+  const VERSAO_APP = '11';
   async function atualizarApp(btn) {
     btn.textContent = 'Atualizando…'; btn.disabled = true;
     try {
@@ -1235,10 +1235,11 @@
         h('div', { class: 'acoes', style: 'margin-top:10px' }, h('button', { type: 'button', class: 'primario', onclick: salvarSaldo }, 'Salvar saldo'))),
 
       cartaoJuntos(() => fechar()),
+      cartaoSync(() => fechar()),
 
       h('section', { class: 'aj-cartao' },
         h('h4', {}, 'Levar dados do Privado para outro aparelho'),
-        h('p', { class: 'nota', style: 'margin:0 0 12px' }, 'Os dados do Privado ficam só neste aparelho. Gere um arquivo aqui e carregue no outro. Serve também como backup. O Juntos já fica na nuvem, não precisa disso.'),
+        h('p', { class: 'nota', style: 'margin:0 0 12px' }, (Sync.estado().ativo ? 'Com a sincronização ligada, o Privado já fica guardado na nuvem. Este arquivo serve como backup extra.' : 'Sem a sincronização, os dados do Privado ficam só neste aparelho. Gere um arquivo aqui e carregue no outro. Serve também como backup. O Juntos já fica na nuvem, não precisa disso.')),
         h('div', { class: 'aj-botoes' },
           h('button', { type: 'button', class: 'primario', onclick: baixar }, '⬇  Baixar arquivo'),
           podeCompartilhar && h('button', { type: 'button', onclick: compartilhar }, '↗  Compartilhar')),
@@ -1456,6 +1457,61 @@
     ]);
   }
 
+
+  // cartão do Ajustes: guardar o Privado na nuvem (só a sua conta enxerga)
+  function cartaoSync(fecharGaveta) {
+    const caixa = h('section', { class: 'aj-cartao' });
+    const msg = h('div', { class: 'aj-msg', role: 'status' });
+    const dizer = (t, erro) => { msg.className = 'aj-msg ' + (erro ? 'erro' : 'ok'); msg.textContent = t; };
+    const haQuanto = (ms) => {
+      if (!ms) return 'ainda não sincronizou';
+      const m = Math.round((Date.now() - ms) / 60000);
+      return m < 1 ? 'agora há pouco' : m < 60 ? 'há ' + m + ' min' : m < 1440 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.round(m / 1440) + ' dia(s)';
+    };
+    const refazer = () => caixa.replaceChildren(...conteudo(), msg);
+    async function rodar(fn, ok) {
+      try { const r = await fn(); refazer(); dizer(typeof ok === 'function' ? ok(r) : ok, false); }
+      catch (e) { refazer(); dizer(e.message, true); }
+    }
+    function conteudo() {
+      const e = Sync.estado();
+      const itens = [h('h4', {}, 'Sincronizar o Privado')];
+      if (!e.logado) {
+        itens.push(
+          h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Guarda o Privado na nuvem para abrir em qualquer aparelho, mesmo se perder o celular. Só a sua conta enxerga. Para ligar, entre na sua conta.'),
+          h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: () => { fecharGaveta(); trocarEspaco('juntos'); } }, 'Entrar na conta')));
+        return itens;
+      }
+      if (!e.ativo) {
+        itens.push(
+          h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Guarda o Privado na nuvem, só na conta ' + Nuvem.email() + '. Continua funcionando sem internet e sincroniza quando voltar. Nos outros aparelhos, entre na mesma conta e ligue também.'),
+          h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Atenção: se o mesmo lançamento foi digitado em dois aparelhos, ele aparece duas vezes depois de juntar. Saldo inicial e configurações ficam os do primeiro aparelho que sincronizar.'),
+          h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'primario', onclick: (ev) => { ev.currentTarget.disabled = true; rodar(() => Sync.ligar(), (r) => 'Ligado. Enviados: ' + (r ? r.enviados : 0) + ' · Recebidos: ' + (r ? r.recebidos : 0) + '.'); } }, 'Ligar sincronização')));
+        return itens;
+      }
+      if (e.outraConta) {
+        itens.push(
+          h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'A sincronização deste aparelho estava ligada em outra conta. Você entrou com ' + Nuvem.email() + '. Nada é enviado até você escolher.'),
+          h('div', { class: 'acoes' },
+            h('button', { type: 'button', onclick: (ev) => doisToques(ev.currentTarget, 'Toque de novo: enviar o Privado desta conta', () => { Sync.desligar(); return rodar(() => Sync.ligar(), 'Ligado nesta conta.'); }) }, 'Usar esta conta'),
+            h('button', { type: 'button', class: 'perigo', onclick: () => { Sync.desligar(); refazer(); } }, 'Desligar')));
+        return itens;
+      }
+      itens.push(
+        h('div', { class: 'cx-linha' }, h('span', {}, 'Conta'), h('strong', {}, Nuvem.email())),
+        h('div', { class: 'cx-linha' }, h('span', {}, 'Último envio'), h('span', { class: 'sub' }, e.rodando ? 'sincronizando…' : haQuanto(e.ultimo))),
+        e.erro && h('p', { class: 'aj-msg erro', style: 'margin:8px 0 0' }, e.erro),
+        h('div', { class: 'acoes', style: 'margin-top:10px; flex-direction:column; align-items:stretch' },
+          h('button', { type: 'button', class: 'primario', onclick: (ev) => { ev.currentTarget.disabled = true; rodar(() => Sync.sincronizar(), 'Sincronizado.'); } }, 'Sincronizar agora'),
+          h('button', { type: 'button', onclick: () => { Sync.desligar(); refazer(); dizer('Desligado. Os dados continuam neste aparelho e a cópia da nuvem fica guardada.', false); } }, 'Desligar'),
+          h('button', { type: 'button', class: 'perigo', onclick: (ev) => doisToques(ev.currentTarget, 'Toque de novo para apagar a cópia', async () => { await Nuvem.apagar('p_registros', 'user_id=eq.' + Nuvem.meuId()); Sync.desligar(); refazer(); dizer('Cópia da nuvem apagada. Os dados continuam neste aparelho.', false); }) }, 'Desligar e apagar a cópia da nuvem')));
+      return itens;
+    }
+    Sync.aoMudarEstado(() => { if (caixa.isConnected && !msg.textContent) refazer(); });
+    refazer();
+    return caixa;
+  }
+
   // cartão do Ajustes: conta, pessoas, convite, meta
   function cartaoJuntos(fecharGaveta) {
     if (!Nuvem.logado()) return null;
@@ -1499,7 +1555,9 @@
     estado.persistente = r.persistente;
     const c0 = await DB.lerConfig();
     if (c0.espaco === 'juntos' && Nuvem.logado()) estado.espaco = 'juntos';
+    Sync.aoReceber = async () => { if (estado.espaco !== 'juntos' && !document.querySelector('.fundo')) await recarregar(); };
     await recarregar();
+    Sync.iniciar();
     if (!estado.cfg.saldoDefinido) abrirAjustes();
   })();
 })();
