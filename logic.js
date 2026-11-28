@@ -145,6 +145,42 @@
 
   const formatData = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
 
+
+  // ---------- caixinha (meta compartilhada) ----------
+  // aportes: [{user_id, valor_centavos, data:'YYYY-MM-DD'}]; meta em centavos (ou null); dataMeta 'YYYY-MM-DD' (ou null)
+  function resumoCaixinha(meta, dataMeta, aportes, hoje) {
+    const total = aportes.reduce((s, a) => s + a.valor_centavos, 0);
+    const porPessoa = {};
+    aportes.forEach((a) => { porPessoa[a.user_id] = (porPessoa[a.user_id] || 0) + a.valor_centavos; });
+    const r = { total, porPessoa, meta: meta || null, falta: null, pct: null, mesesRestantes: null, porMes: null, ritmo: null, chegaEm: null, noPrazo: null };
+    // ritmo = média mensal dos últimos 3 meses fechados + o atual, só se houver aporte
+    if (aportes.length) {
+      const [hy, hm] = hoje.split('-').map(Number);
+      const idxHoje = hy * 12 + (hm - 1);
+      const jan = aportes.filter((a) => { const [y, m] = a.data.split('-').map(Number); const i = y * 12 + (m - 1); return i > idxHoje - 4 && i <= idxHoje; });
+      const primeiro = aportes.reduce((mn, a) => { const [y, m] = a.data.split('-').map(Number); return Math.min(mn, y * 12 + (m - 1)); }, Infinity);
+      const meses = Math.max(1, Math.min(4, idxHoje - primeiro + 1));
+      // com menos de 2 meses de histórico a média engana (o 1º mês é só o que já entrou): não projeta
+      if (idxHoje - primeiro + 1 >= 2) r.ritmo = Math.round(jan.reduce((s, a) => s + a.valor_centavos, 0) / meses);
+    }
+    if (meta) {
+      r.falta = Math.max(0, meta - total);
+      r.pct = Math.min(100, Math.floor((total / meta) * 100));
+      if (dataMeta) {
+        const [hy, hm] = hoje.split('-').map(Number), [dy, dm] = dataMeta.split('-').map(Number);
+        r.mesesRestantes = Math.max(0, (dy * 12 + dm) - (hy * 12 + hm));
+        if (r.falta > 0 && r.mesesRestantes > 0) r.porMes = Math.ceil(r.falta / r.mesesRestantes);
+        if (r.falta > 0 && r.ritmo > 0) {
+          const n = Math.ceil(r.falta / r.ritmo);
+          const idx = hy * 12 + (hm - 1) + n;
+          r.chegaEm = Math.floor(idx / 12) + '-' + String((idx % 12) + 1).padStart(2, '0');
+          r.noPrazo = r.chegaEm <= dataMeta.slice(0, 7);
+        } else if (r.falta === 0) r.noPrazo = true;
+      }
+    }
+    return r;
+  }
+
   // ---------- fixos ----------
   // Um fixo é uma regra {id, tipo, valor, descricao, dia, inicio:'YYYY-MM', fim:'YYYY-MM'|null}.
   // As ocorrências mensais são calculadas na hora. Exceções ({id:'fixoId|YYYY-MM', valor?, descricao?, status?, pulado?})
@@ -288,5 +324,5 @@
 
   const todosLancamentos = (lancs, fixos, excecoes, ateChave) => lancs.concat(expandirFixos(fixos, excecoes, ateChave));
 
-  return { CATEGORIAS, categoriaDe, agruparPorCategoria, vencidosPendentes, parsePercentual, textoPrazo, rotuloMeses, simularJuros, composicaoMes, previsao, resumoPrevisao, compacto, balancoMes, filtrar, gerarParcelas, rotulo, chaveParaIdx, idxParaChave, chaveAnterior, chaveProxima, dataDoFixo, expandirFixos, todosLancamentos, MESES, sinal, hojeISO, chaveMes, ultimoDia, statusPadrao, saldoAtual, saldoPrevistoFimMes, doMes, resumoMes, formatBRL, parseValor, valorParaInput, formatData };
+  return { resumoCaixinha, CATEGORIAS, categoriaDe, agruparPorCategoria, vencidosPendentes, parsePercentual, textoPrazo, rotuloMeses, simularJuros, composicaoMes, previsao, resumoPrevisao, compacto, balancoMes, filtrar, gerarParcelas, rotulo, chaveParaIdx, idxParaChave, chaveAnterior, chaveProxima, dataDoFixo, expandirFixos, todosLancamentos, MESES, sinal, hojeISO, chaveMes, ultimoDia, statusPadrao, saldoAtual, saldoPrevistoFimMes, doMes, resumoMes, formatBRL, parseValor, valorParaInput, formatData };
 });

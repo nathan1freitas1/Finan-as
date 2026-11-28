@@ -183,3 +183,19 @@ div.campo { display: block; font-size: 13px; color: var(--suave); margin-bottom:
 .aj-avancado { margin-top: 14px; color: var(--suave); font-size: 14px; }
 .aj-avancado summary { cursor: pointer; padding: 6px 0; }
 .aj-avancado textarea { width: 100%; min-height: 80px; padding: 10px; border-radius: 12px; border: 1px solid var(--borda); background: var(--card2); color: var(--texto); font-family: ui-monospace, monospace; font-size: 12px; box-sizing: border-box; }
+
+/* caixinha */
+.cx { padding-bottom: 90px; }
+.cx-nome { font-size: 15px; color: var(--suave); }
+.cx-total { font-size: 34px; font-weight: 700; margin: 2px 0 10px; letter-spacing: -.5px; }
+.cx-barra { height: 14px; border-radius: 99px; background: var(--card2); overflow: hidden; }
+.cx-barra-in { height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--azul), var(--verde)); transition: width .4s ease; }
+.cx-linha { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--borda); font-size: 14px; }
+.cx-linha:first-of-type { border-top: 0; }
+.cx-linha span:first-child { color: var(--suave); }
+.cx-linha strong { text-align: right; }
+.cx-linha .pos, strong.pos { color: var(--verde); }
+.cx-ap { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--borda); }
+.cx-ap:first-of-type { border-top: 0; }
+.cx-ap-v { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.cx input[type=email], .cx input[type=password], .cx input[type=text], .cx input[type=date] { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--borda); background: var(--card2); color: var(--texto); font-size: 16px; }

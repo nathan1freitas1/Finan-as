@@ -7,7 +7,8 @@
     mes: hoje0.getMonth() + 1,
     lancs: [], fixos: [], excecoes: [],
     filtroTipo: null, soPendentes: false,
-    tela: 'mes', // 'mes' | 'previsao' | 'juros'
+    tela: 'mes', // 'mes' | 'previsao' | 'juros' | 'caixinha'
+    cx: { atual: null, dados: null, offline: null, erro: '', msg: '' },
     juros: { inicial: '1000,00', aporte: '200,00', taxa: '10', taxaPor: 'ano', prazo: '10', prazoEm: 'anos' },
     jurosCarregado: false,
     cfg: { saldoInicial: 0, saldoDefinido: false },
@@ -102,6 +103,7 @@
   function desenhar() {
     if (estado.tela === 'previsao') { desenharPrevisao(); return; }
     if (estado.tela === 'juros') { desenharJuros(); return; }
+    if (estado.tela === 'caixinha') { desenharCaixinha(); return; }
     const { ano, mes, cfg } = estado;
     const t = todos();
     const atual = L.saldoAtual(cfg, t);
@@ -386,9 +388,9 @@
     const aba = (tela, icone, nome) => h('button', {
       class: 'aba' + (estado.tela === tela ? ' on' : ''),
       'aria-current': estado.tela === tela ? 'page' : null,
-      onclick: () => { estado.tela = tela; desenhar(); window.scrollTo(0, 0); },
+      onclick: () => { estado.tela = tela; if (tela === 'caixinha') estado.cx.ultimaCarga = 0; desenhar(); window.scrollTo(0, 0); },
     }, h('span', { class: 'ic' }, icone), nome);
-    return h('nav', { class: 'barra' }, aba('mes', '▦', 'Mês'), aba('previsao', '↗', 'Previsão'), aba('juros', '％', 'Juros'));
+    return h('nav', { class: 'barra' }, aba('mes', '▦', 'Mês'), aba('previsao', '↗', 'Previsão'), aba('caixinha', '◎', 'Caixinha'), aba('juros', '％', 'Juros'));
   }
 
   // ---------- previsão dos próximos 12 meses ----------
@@ -1065,7 +1067,7 @@
 
   // ---------- atualizar o app ----------
   // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
-  const VERSAO_APP = '7';
+  const VERSAO_APP = '8';
   async function atualizarApp(btn) {
     btn.textContent = 'Atualizando…'; btn.disabled = true;
     try {
@@ -1227,6 +1229,242 @@
         h('p', { class: 'nota', style: 'margin:0 0 10px' }, 'Baixa a versão mais recente (precisa de internet). Seus lançamentos não são apagados.'),
         h('div', { class: 'acoes' }, h('button', { type: 'button', onclick: (e) => atualizarApp(e.currentTarget) }, 'Atualizar agora')),
         h('p', { class: 'nota', style: 'margin:10px 0 0' }, 'Versão instalada: ' + VERSAO_APP)),
+    ]);
+  }
+
+  // ---------- caixinha compartilhada (nuvem) ----------
+  const CACHE_CX = 'mc_cx_cache';
+  const nomeBonito = (m) => m || 'Membro';
+  const dataBR = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4);
+  const mesBR = (ym) => L.MESES[+ym.slice(5, 7) - 1] + '/' + ym.slice(0, 4);
+
+  function desenharCaixinha() {
+    const raiz = document.getElementById('app');
+    const topo = h('div', { class: 'topo' }, h('div', { style: 'width:42px' }), h('div', { class: 'mes' }, 'Caixinha'),
+      Nuvem.logado() ? h('button', { class: 'icone', 'aria-label': 'Sair da conta', title: 'Sair da conta', onclick: sairDaConta }, '⎋') : h('div', { style: 'width:42px' }));
+    const cx = estado.cx;
+    raiz.replaceChildren(topo, h('div', { class: 'cx' }, !Nuvem.logado() ? telaLogin() : cx.dados ? telaCaixinha() : h('p', { class: 'nota', style: 'text-align:center;margin-top:30px' }, cx.erro || 'Carregando…')), barraInferior());
+    if (Nuvem.logado() && !cx.carregando && ((!cx.dados && !cx.erro) || (cx.dados && Date.now() - (cx.ultimaCarga || 0) > 4000))) carregarCaixinha();
+  }
+
+  function sairDaConta() {
+    Nuvem.sair(); try { localStorage.removeItem(CACHE_CX); } catch (e) {}
+    estado.cx = { atual: null, dados: null, offline: null, erro: '', msg: '' };
+    desenhar();
+  }
+
+  function telaLogin() {
+    const inEmail = h('input', { type: 'email', autocomplete: 'email', placeholder: 'seu@email.com' });
+    const inSenha = h('input', { type: 'password', autocomplete: 'current-password', placeholder: 'Senha (8 ou mais caracteres)' });
+    const msg = h('div', { class: 'erro', role: 'alert' });
+    const btnEntrar = h('button', { type: 'button', class: 'primario' }, 'Entrar');
+    const btnCriar = h('button', { type: 'button' }, 'Criar conta');
+    async function ir(criar) {
+      msg.className = 'erro'; msg.textContent = '';
+      if (!inEmail.value.includes('@') || inSenha.value.length < 6) { msg.textContent = 'Digite o e-mail e a senha.'; return; }
+      btnEntrar.disabled = btnCriar.disabled = true;
+      try {
+        if (criar) {
+          const entrou = await Nuvem.cadastrar(inEmail.value, inSenha.value);
+          if (!entrou) { msg.className = 'aj-msg ok'; msg.textContent = 'Conta criada. Abra o e-mail que você recebeu, confirme, e depois toque em Entrar.'; btnEntrar.disabled = btnCriar.disabled = false; return; }
+        } else await Nuvem.entrar(inEmail.value, inSenha.value);
+        estado.cx = { atual: null, dados: null, offline: null, erro: '', msg: '' };
+        desenhar();
+      } catch (e) { msg.textContent = e.message; btnEntrar.disabled = btnCriar.disabled = false; }
+    }
+    btnEntrar.addEventListener('click', () => ir(false));
+    btnCriar.addEventListener('click', () => ir(true));
+    inSenha.addEventListener('keydown', (e) => { if (e.key === 'Enter') ir(false); });
+    return h('div', { class: 'caixa' },
+      h('h3', { style: 'margin:0 0 6px' }, 'Caixinha da família'),
+      h('p', { class: 'nota', style: 'margin:0 0 14px' }, 'Uma meta em conjunto, em que cada um registra o que aportou. Os seus lançamentos pessoais continuam só neste aparelho. Precisa de internet.'),
+      h('label', { class: 'campo' }, 'E-mail', inEmail),
+      h('label', { class: 'campo' }, 'Senha', inSenha),
+      msg,
+      h('div', { class: 'acoes', style: 'margin-top:10px' }, btnEntrar, btnCriar),
+      h('p', { class: 'nota', style: 'margin:12px 0 0' }, 'Use o mesmo e-mail e senha que você já usa no FocoPro, se tiver conta lá. A conta é compartilhada, mas os dados não.'));
+  }
+
+  async function carregarCaixinha() {
+    const cx = estado.cx; cx.carregando = true;
+    try {
+      await Nuvem.rpc('aceitar_convites');
+      const lista = await Nuvem.ler('caixinhas', 'select=*&order=criado_em');
+      if (!lista.length) { cx.dados = { caixinhas: [], atual: null }; }
+      else {
+        const atual = lista.find((c) => c.id === cx.atual) || lista[0];
+        const [membros, aportes, convites] = await Promise.all([
+          Nuvem.ler('membros', 'select=*&caixinha_id=eq.' + atual.id),
+          Nuvem.ler('aportes', 'select=*&caixinha_id=eq.' + atual.id + '&order=data.desc,criado_em.desc'),
+          Nuvem.ler('convites', 'select=*&caixinha_id=eq.' + atual.id),
+        ]);
+        cx.atual = atual.id;
+        cx.dados = { caixinhas: lista, atual, membros, aportes, convites };
+      }
+      cx.offline = null; cx.erro = '';
+      try { localStorage.setItem(CACHE_CX, JSON.stringify({ em: Date.now(), usuario: Nuvem.meuId(), dados: cx.dados })); } catch (e) {}
+    } catch (e) {
+      if (e.sessaoExpirou) { cx.carregando = false; desenhar(); return; }
+      let c = null; try { c = JSON.parse(localStorage.getItem(CACHE_CX) || 'null'); } catch (x) {}
+      if (c && c.usuario === Nuvem.meuId() && c.dados) { cx.dados = c.dados; cx.offline = c.em; }
+      else cx.erro = e.offline ? 'Sem internet. A caixinha precisa de conexão na primeira vez.' : 'Não consegui carregar: ' + e.message + (e.status === 406 || e.status === 404 ? ' (o banco ainda não liberou o schema "meucaixa" na API.)' : '');
+    }
+    cx.carregando = false; cx.ultimaCarga = Date.now();
+    if (estado.tela === 'caixinha') desenhar();
+  }
+
+  function telaCaixinha() {
+    const cx = estado.cx, d = cx.dados;
+    if (!d.atual) return telaCriarCaixinha();
+    const meuId = Nuvem.meuId();
+    const nomes = {}; d.membros.forEach((m) => { nomes[m.user_id] = nomeBonito(m.nome); });
+    const eu = d.membros.find((m) => m.user_id === meuId) || {};
+    const dono = eu.papel === 'dono';
+    const c = d.atual;
+    const r = L.resumoCaixinha(c.meta_centavos, c.data_meta, d.aportes, L.hojeISO());
+    const hojeISO = L.hojeISO();
+
+    const blocos = [];
+    if (cx.offline) blocos.push(h('div', { class: 'aviso', style: 'margin-bottom:12px' }, 'Sem conexão: mostrando os dados de ' + new Date(cx.offline).toLocaleDateString('pt-BR') + '. Para registrar aportes, volte a ficar online.'));
+    if (d.caixinhas.length > 1) {
+      const sel = h('select', {}, ...d.caixinhas.map((x) => h('option', { value: x.id }, x.nome)));
+      sel.value = c.id;
+      sel.addEventListener('change', () => { cx.atual = sel.value; cx.dados = null; desenhar(); });
+      blocos.push(h('label', { class: 'campo' }, 'Caixinha', sel));
+    }
+
+    // cartão principal
+    const barra = h('div', { class: 'cx-barra', role: 'progressbar', 'aria-valuenow': r.pct == null ? null : r.pct, 'aria-valuemin': 0, 'aria-valuemax': 100 }, h('div', { class: 'cx-barra-in', style: 'width:' + (r.pct == null ? 0 : Math.max(r.pct, r.total > 0 ? 2 : 0)) + '%' }));
+    const linhas = [];
+    if (r.meta) {
+      linhas.push(h('div', { class: 'cx-linha' }, h('span', {}, 'Meta'), h('strong', {}, L.formatBRL(r.meta) + (c.data_meta ? ' até ' + dataBR(c.data_meta) : ''))));
+      linhas.push(h('div', { class: 'cx-linha' }, h('span', {}, 'Falta'), h('strong', {}, L.formatBRL(r.falta))));
+      if (r.porMes != null) linhas.push(h('div', { class: 'cx-linha' }, h('span', {}, 'Por mês para chegar no prazo'), h('strong', {}, L.formatBRL(r.porMes) + ' (' + r.mesesRestantes + (r.mesesRestantes === 1 ? ' mês)' : ' meses)'))));
+      if (r.ritmo) linhas.push(h('div', { class: 'cx-linha' }, h('span', {}, 'Ritmo atual (média mensal)'), h('strong', {}, L.formatBRL(r.ritmo))));
+      if (r.chegaEm && r.falta > 0) linhas.push(h('div', { class: 'cx-linha' }, h('span', {}, 'No ritmo atual, chega em'), h('strong', { class: r.noPrazo ? 'pos' : 'neg' }, mesBR(r.chegaEm) + (c.data_meta ? (r.noPrazo ? ' · dentro do prazo' : ' · depois do prazo') : ''))));
+      if (r.falta === 0) linhas.push(h('p', { class: 'nota', style: 'margin:8px 0 0' }, 'Meta atingida!'));
+    }
+    blocos.push(h('div', { class: 'caixa' },
+      h('div', { class: 'cx-nome' }, c.nome),
+      h('div', { class: 'cx-total' }, L.formatBRL(r.total)),
+      barra,
+      r.pct != null ? h('div', { class: 'nota', style: 'margin:6px 0 10px' }, r.pct + '% da meta') : h('div', { class: 'nota', style: 'margin:6px 0 10px' }, 'Sem meta definida'),
+      ...linhas,
+      h('div', { class: 'acoes', style: 'margin-top:14px' }, h('button', { type: 'button', class: 'primario', disabled: !!cx.offline, onclick: () => abrirAporte(c) }, '＋ Registrar aporte'))));
+
+    // por pessoa
+    if (d.membros.length) {
+      blocos.push(h('div', { class: 'caixa', style: 'margin-top:14px' },
+        h('h4', { style: 'margin:0 0 8px' }, 'Quem aportou'),
+        ...d.membros.map((m) => h('div', { class: 'cx-linha' }, h('span', {}, nomes[m.user_id] + (m.user_id === meuId ? ' (você)' : '')), h('strong', {}, L.formatBRL(r.porPessoa[m.user_id] || 0))))));
+    }
+
+    // aportes
+    blocos.push(h('div', { class: 'caixa', style: 'margin-top:14px' },
+      h('h4', { style: 'margin:0 0 8px' }, 'Aportes (' + d.aportes.length + ')'),
+      d.aportes.length ? d.aportes.map((a) => h('div', { class: 'cx-ap' },
+        h('div', {}, h('div', {}, nomes[a.user_id] || 'Membro'), h('div', { class: 'sub' }, dataBR(a.data) + (a.nota ? ' · ' + a.nota : ''))),
+        h('div', { class: 'cx-ap-v' }, L.formatBRL(a.valor_centavos),
+          a.user_id === meuId && !cx.offline ? h('button', { class: 'icone', 'aria-label': 'Excluir aporte', title: 'Excluir', onclick: (e) => doisToques(e.currentTarget, '?', async () => { try { await Nuvem.apagar('aportes', 'id=eq.' + a.id); cx.dados = null; desenhar(); } catch (er) { alert(er.message); } }) }, '✕') : null))) : h('p', { class: 'nota', style: 'margin:0' }, 'Nenhum aporte ainda. Quando você depositar, registre aqui.')));
+
+    // pessoas e convites
+    const inConvite = h('input', { type: 'email', placeholder: 'e-mail de quem vai entrar' });
+    const msg = h('div', { class: 'aj-msg', role: 'status' });
+    const convidar = async () => {
+      const em = inConvite.value.trim().toLowerCase();
+      if (!em.includes('@')) { msg.className = 'aj-msg erro'; msg.textContent = 'E-mail inválido.'; return; }
+      try {
+        await Nuvem.criar('convites', { caixinha_id: c.id, email: em });
+        cx.dados = null; cx.msg = 'Convite criado. Peça para a pessoa abrir o Meu Caixa > Caixinha e entrar com esse e-mail.'; desenhar();
+      } catch (e) { msg.className = 'aj-msg erro'; msg.textContent = e.codigo === '23505' ? 'Esse e-mail já foi convidado.' : e.message; }
+    };
+    const inNome = h('input', { type: 'text', value: eu.nome || '', maxlength: 30, placeholder: 'Seu nome' });
+    const salvarNome = async () => {
+      const n = inNome.value.trim(); if (!n) return;
+      try { await Nuvem.mudar('membros', 'caixinha_id=eq.' + c.id + '&user_id=eq.' + meuId, { nome: n }); cx.dados = null; desenhar(); } catch (e) { msg.className = 'aj-msg erro'; msg.textContent = e.message; }
+    };
+    blocos.push(h('div', { class: 'caixa', style: 'margin-top:14px' },
+      h('h4', { style: 'margin:0 0 8px' }, 'Pessoas'),
+      ...d.convites.map((v) => h('div', { class: 'cx-linha' }, h('span', {}, v.email), h('span', { class: 'sub' }, 'convite pendente'))),
+      dono ? h('div', { style: 'margin-top:8px' }, inConvite, h('div', { class: 'acoes', style: 'margin-top:8px' }, h('button', { type: 'button', disabled: !!cx.offline, onclick: convidar }, 'Convidar por e-mail'))) : null,
+      cx.msg ? h('div', { class: 'aj-msg ok' }, cx.msg) : null,
+      msg,
+      h('div', { class: 'aj-sep' }),
+      h('label', { class: 'campo' }, 'Seu nome na caixinha', inNome),
+      h('div', { class: 'acoes' }, h('button', { type: 'button', disabled: !!cx.offline, onclick: salvarNome }, 'Salvar nome'))));
+    cx.msg = '';
+
+    // editar meta (dono)
+    if (dono) blocos.push(h('div', { class: 'acoes', style: 'margin-top:14px' }, h('button', { type: 'button', disabled: !!cx.offline, onclick: () => abrirMeta(c) }, 'Editar nome, meta e data')));
+    blocos.push(h('p', { class: 'nota', style: 'margin:14px 4px 0' }, 'Conectado como ' + Nuvem.email() + '. A caixinha só registra o que vocês informam: não move dinheiro nem lê o banco.'));
+    return h('div', {}, blocos);
+  }
+
+  function telaCriarCaixinha() {
+    const inNome = h('input', { type: 'text', value: 'Viagem Europa', maxlength: 80 });
+    const inMeta = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'Ex.: 20000,00' });
+    const hj = new Date(); const inData = h('input', { type: 'date', value: (hj.getFullYear() + 1) + '-' + String(hj.getMonth() + 1).padStart(2, '0') + '-' + String(hj.getDate()).padStart(2, '0') });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    const criar = async () => {
+      const meta = inMeta.value.trim() ? L.parseValor(inMeta.value) : null;
+      if (!inNome.value.trim()) { erro.textContent = 'Dê um nome.'; return; }
+      if (inMeta.value.trim() && !(meta > 0)) { erro.textContent = 'Meta inválida.'; return; }
+      try { await Nuvem.rpc('criar_caixinha', { p_nome: inNome.value.trim(), p_meta: meta, p_data: inData.value || null }); estado.cx.dados = null; desenhar(); }
+      catch (e) { erro.textContent = e.message; }
+    };
+    return h('div', { class: 'caixa' },
+      h('h3', { style: 'margin:0 0 6px' }, 'Criar a caixinha'),
+      h('p', { class: 'nota', style: 'margin:0 0 12px' }, 'Se alguém já convidou o seu e-mail, a caixinha aparece sozinha: feche e abra esta aba. Senão, crie uma agora e convide a outra pessoa depois.'),
+      h('label', { class: 'campo' }, 'Nome', inNome),
+      h('label', { class: 'campo' }, 'Meta (R$)', inMeta),
+      h('label', { class: 'campo' }, 'Data da meta', inData),
+      erro,
+      h('div', { class: 'acoes', style: 'margin-top:10px' }, h('button', { type: 'button', class: 'primario', onclick: criar }, 'Criar caixinha'),
+        h('button', { type: 'button', onclick: () => { estado.cx.dados = null; desenhar(); } }, 'Verificar convites')));
+  }
+
+  function abrirAporte(c) {
+    const inValor = h('input', { type: 'text', inputmode: 'decimal', class: 'valor-grande', placeholder: '0,00' });
+    const inData = h('input', { type: 'date', value: L.hojeISO() });
+    const inNota = h('input', { type: 'text', maxlength: 200, placeholder: 'Opcional' });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    let fechar;
+    const salvar = async () => {
+      const v = L.parseValor(inValor.value);
+      if (!(v > 0)) { erro.textContent = 'Digite um valor maior que zero.'; return; }
+      try {
+        await Nuvem.criar('aportes', { caixinha_id: c.id, valor_centavos: v, data: inData.value || L.hojeISO(), nota: inNota.value.trim() || null });
+        fechar(); estado.cx.dados = null; desenhar();
+      } catch (e) { erro.textContent = e.message; }
+    };
+    fechar = abrirFolha([
+      h('h3', {}, 'Registrar aporte'),
+      campoValor(inValor),
+      h('label', { class: 'campo' }, 'Data', inData),
+      h('label', { class: 'campo' }, 'Nota', inNota),
+      erro,
+      h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'primario', onclick: salvar }, 'Salvar'), h('button', { type: 'button', onclick: () => fechar() }, 'Cancelar')),
+    ]);
+    inValor.focus();
+  }
+
+  function abrirMeta(c) {
+    const inNome = h('input', { type: 'text', value: c.nome, maxlength: 80 });
+    const inMeta = h('input', { type: 'text', inputmode: 'decimal', value: c.meta_centavos ? L.valorParaInput(c.meta_centavos) : '' });
+    const inData = h('input', { type: 'date', value: c.data_meta || '' });
+    const erro = h('div', { class: 'erro', role: 'alert' });
+    let fechar;
+    const salvar = async () => {
+      const meta = inMeta.value.trim() ? L.parseValor(inMeta.value) : null;
+      if (!inNome.value.trim()) { erro.textContent = 'Dê um nome.'; return; }
+      if (inMeta.value.trim() && !(meta > 0)) { erro.textContent = 'Meta inválida.'; return; }
+      try { await Nuvem.mudar('caixinhas', 'id=eq.' + c.id, { nome: inNome.value.trim(), meta_centavos: meta, data_meta: inData.value || null }); fechar(); estado.cx.dados = null; desenhar(); }
+      catch (e) { erro.textContent = e.message; }
+    };
+    fechar = abrirFolha([
+      h('h3', {}, 'Nome, meta e data'),
+      h('label', { class: 'campo' }, 'Nome', inNome), h('label', { class: 'campo' }, 'Meta (R$)', inMeta), h('label', { class: 'campo' }, 'Data da meta', inData), erro,
+      h('div', { class: 'acoes' }, h('button', { type: 'button', class: 'primario', onclick: salvar }, 'Salvar'), h('button', { type: 'button', onclick: () => fechar() }, 'Cancelar')),
     ]);
   }
 
