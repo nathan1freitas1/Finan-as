@@ -180,7 +180,7 @@
     const totalDes = despesas.reduce((s, l) => s + l.valor, 0) || 1;
     const grupos = L.agruparPorCategoria(despesas).map((g) => Object.assign(g, { chave: 'd:' + g.id, sinal: '−' }));
     if (receitas.length) {
-      grupos.push({ chave: 'receitas', nome: 'Receitas', cor: '#6fc7a1', itens: receitas, total: receitas.reduce((s, l) => s + l.valor, 0),
+      grupos.push({ chave: 'receitas', nome: 'Receitas', cor: '#6fcf9f', itens: receitas, total: receitas.reduce((s, l) => s + l.valor, 0),
         pendentes: receitas.filter((l) => l.status === 'pendente').length, sinal: '+' });
     }
     return h('div', { class: 'grupos' }, grupos.map((g) => {
@@ -215,10 +215,10 @@
   function donutSVG(c) {
     const R = 42, C = 2 * Math.PI * R;
     const svg = svgEl('svg', { viewBox: '0 0 120 120', role: 'img', 'aria-label': 'Receitas ' + c.pctRec + '% e despesas ' + c.pctDes + '% do mês' });
-    svg.append(svgEl('circle', { cx: 60, cy: 60, r: R, fill: 'none', stroke: '#2c2c30', 'stroke-width': 12 }));
+    svg.append(svgEl('circle', { cx: 60, cy: 60, r: R, fill: 'none', stroke: '#26352f', 'stroke-width': 12 }));
     const total = c.totalRec + c.totalDes;
     let acumulado = 0;
-    [[c.recPago, '#6fc7a1', 1], [c.recPend, '#6fc7a1', 0.4], [c.desPago, '#e57373', 1], [c.desPend, '#e57373', 0.4]].forEach(([v, cor, op]) => {
+    [[c.recPago, '#6fcf9f', 1], [c.recPend, '#6fcf9f', 0.4], [c.desPago, '#ee8470', 1], [c.desPend, '#ee8470', 0.4]].forEach(([v, cor, op]) => {
       if (!v || !total) return;
       const len = (v / total) * C;
       svg.append(svgEl('circle', {
@@ -242,7 +242,7 @@
         h('div', { class: 'p' }, nome + ' · ' + itens(n)),
         h('div', { class: 'v2' }, L.formatBRL(valor) + (vazio ? '' : ' · ' + pct + '%'))));
     return h('div', { class: 'caixa balanco' },
-      h('div', { class: 't' }, h('span', { class: 'bolinha', style: 'background:var(--azul)' }, '='), 'Balanço do mês'),
+      h('div', { class: 't' }, h('span', { class: 'bolinha', style: 'background:var(--acento)' }, '='), 'Balanço do mês'),
       h('div', { class: 'balanco-corpo' },
         h('div', { class: 'donut' },
           donutSVG(c),
@@ -290,17 +290,17 @@
     svg.append(svgEl('line', { x1: 0, x2: W, y1: y(0), y2: y(0), stroke: '#555', 'stroke-width': 1 }));
     pts.forEach((p, i) => {
       const x = i * slot + (slot - bw) / 2;
-      const inv = svgEl('rect', { x, y: y(p.investido), width: bw, height: Math.max(y(0) - y(p.investido), 0), fill: '#8ab4f8' });
-      const jur = svgEl('rect', { x, y: y(p.total), width: bw, height: Math.max(y(p.investido) - y(p.total), 0), fill: '#6fc7a1' });
+      const inv = svgEl('rect', { x, y: y(p.investido), width: bw, height: Math.max(y(0) - y(p.investido), 0), fill: '#e6b04b' });
+      const jur = svgEl('rect', { x, y: y(p.total), width: bw, height: Math.max(y(p.investido) - y(p.total), 0), fill: '#6fcf9f' });
       inv.append(svgEl('title', {}, L.textoPrazo(p.mes) + ' · investido ' + L.formatBRL(p.investido)));
       jur.append(svgEl('title', {}, L.textoPrazo(p.mes) + ' · juros ' + L.formatBRL(p.juros)));
       svg.append(inv, jur);
       if (i % cada === 0 || i === pts.length - 1) {
-        svg.append(svgEl('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#9a9aa2' }, L.rotuloMeses(p.mes)));
+        svg.append(svgEl('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle', 'font-size': 10, fill: '#8c9f96' }, L.rotuloMeses(p.mes)));
       }
     });
     const ult = pts.length - 1, xu = ult * slot + (slot - bw) / 2;
-    svg.append(svgEl('text', { x: xu + bw, y: y(pts[ult].total) - 5, 'text-anchor': 'end', 'font-size': 10, 'font-weight': 600, fill: '#ececee' }, 'R$ ' + L.compacto(pts[ult].total)));
+    svg.append(svgEl('text', { x: xu + bw, y: y(pts[ult].total) - 5, 'text-anchor': 'end', 'font-size': 10, 'font-weight': 600, fill: '#ecefe8' }, 'R$ ' + L.compacto(pts[ult].total)));
     return svg;
   }
 
@@ -328,7 +328,7 @@
           : 'Taxa equivalente: ' + pct2(r.taxaAnual * 100) + ' ao ano')),
       h('div', { class: 'duplo' },
         h('div', { class: 'caixa' },
-          h('div', { class: 't' }, h('span', { class: 'dot', style: 'background:#8ab4f8;margin-top:0' }), 'Total investido'),
+          h('div', { class: 't' }, h('span', { class: 'dot', style: 'background:#e6b04b;margin-top:0' }), 'Total investido'),
           h('div', { class: 'v' }, L.formatBRL(r.investido))),
         h('div', { class: 'caixa' },
           h('div', { class: 't' }, h('span', { class: 'dot', style: 'background:var(--verde);margin-top:0' }), 'Juros ganhos'),
@@ -338,13 +338,14 @@
         h('div', { class: 't', style: 'margin-bottom:6px' }, 'Evolução do patrimônio'),
         graficoJuros(r),
         h('div', { class: 'legenda-graf' },
-          h('span', {}, h('span', { class: 'dot', style: 'background:#8ab4f8;display:inline-block;margin:0 6px 0 0' }), 'Investido'),
+          h('span', {}, h('span', { class: 'dot', style: 'background:#e6b04b;display:inline-block;margin:0 6px 0 0' }), 'Investido'),
           h('span', {}, h('span', { class: 'dot', style: 'background:var(--verde);display:inline-block;margin:0 6px 0 0' }), 'Juros'))),
       h('h2', {}, 'Período a período'),
       h('div', { class: 'lista' }, r.serie.slice(1).map((p) => h('div', { class: 'item' },
         h('div', { class: 'meio' },
           h('div', { class: 'desc' }, L.textoPrazo(p.mes)),
           h('div', { class: 'sub' }, 'Investido ' + L.formatBRL(p.investido) + ' · Juros ' + L.formatBRL(p.juros))),
+        h('span', { class: 'lider', 'aria-hidden': 'true' }),
         h('div', { class: 'val' }, L.formatBRL(p.total))))),
     ];
   }
@@ -385,11 +386,19 @@
   }
 
   function barraInferior() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const ICONES = {
+      mes: ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4'],
+      previsao: ['M3 17l6-6 4 4 8-8', 'M15 7h6v6'],
+      caixinha: ['M12 3a9 9 0 100 18 9 9 0 000-18z', 'M12 8a4 4 0 100 8 4 4 0 000-8z', 'M12 12h.01'],
+      juros: ['M5 19L19 5', 'M7.5 9a1.5 1.5 0 100-3 1.5 1.5 0 000 3z', 'M16.5 18a1.5 1.5 0 100-3 1.5 1.5 0 000 3z'],
+    };
+    const svg = (tela) => { const s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('aria-hidden', 'true'); ICONES[tela].forEach((d) => { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); s.append(p); }); return s; };
     const aba = (tela, icone, nome) => h('button', {
       class: 'aba' + (estado.tela === tela ? ' on' : ''),
       'aria-current': estado.tela === tela ? 'page' : null,
       onclick: () => { estado.tela = tela; if (tela === 'caixinha') estado.cx.ultimaCarga = 0; desenhar(); window.scrollTo(0, 0); },
-    }, h('span', { class: 'ic' }, icone), nome);
+    }, svg(tela), nome);
     return h('nav', { class: 'barra' }, aba('mes', '▦', 'Mês'), aba('previsao', '↗', 'Previsão'), aba('caixinha', '◎', 'Caixinha'), aba('juros', '％', 'Juros'));
   }
 
@@ -414,11 +423,11 @@
     svg.append(el('line', { x1: 0, x2: W, y1: y0, y2: y0, stroke: '#555', 'stroke-width': 1 }));
     serie.forEach((p, i) => {
       const yv = y(p.saldo), topo = Math.min(yv, y0), alt = Math.max(Math.abs(yv - y0), 1);
-      const barra = el('rect', { x: i * slot + (slot - bw) / 2, y: topo, width: bw, height: alt, rx: 3, fill: p.saldo < 0 ? '#e57373' : '#6fc7a1' });
+      const barra = el('rect', { x: i * slot + (slot - bw) / 2, y: topo, width: bw, height: alt, rx: 3, fill: p.saldo < 0 ? '#ee8470' : '#6fcf9f' });
       barra.append(el('title', {}, L.MESES[p.mes - 1] + ': ' + L.formatBRL(p.saldo)));
       svg.append(barra);
-      svg.append(el('text', { x: i * slot + slot / 2, y: p.saldo >= 0 ? topo - 4 : topo + alt + 10, 'text-anchor': 'middle', 'font-size': 9, fill: '#9a9aa2' }, L.compacto(p.saldo)));
-      svg.append(el('text', { x: i * slot + slot / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 10, fill: '#9a9aa2' }, L.MESES[p.mes - 1].slice(0, 3)));
+      svg.append(el('text', { x: i * slot + slot / 2, y: p.saldo >= 0 ? topo - 4 : topo + alt + 10, 'text-anchor': 'middle', 'font-size': 9, fill: '#8c9f96' }, L.compacto(p.saldo)));
+      svg.append(el('text', { x: i * slot + slot / 2, y: H - 6, 'text-anchor': 'middle', 'font-size': 10, fill: '#8c9f96' }, L.MESES[p.mes - 1].slice(0, 3)));
     });
     return svg;
   }
@@ -456,6 +465,7 @@
         h('div', { class: 'meio' },
           h('div', { class: 'desc' }, L.MESES[p.mes - 1] + ' ' + p.ano),
           h('div', { class: 'sub' }, 'Entra ' + L.formatBRL(p.receitas) + ' · Sai ' + L.formatBRL(p.despesas) + ' · Balanço ' + L.formatBRL(p.balanco))),
+        h('span', { class: 'lider', 'aria-hidden': 'true' }),
         h('div', { class: 'val ' + classeSinal(p.saldo) }, L.formatBRL(p.saldo))))),
       h('p', { class: 'nota', style: 'margin:10px 4px 0' }, 'Considera seus lançamentos, fixos e parcelas. Gastos que você ainda não lançou não entram. Toque num mês para abri-lo.'),
       barraInferior()
@@ -474,6 +484,7 @@
       h('div', { class: 'meio' },
         h('div', { class: 'desc' }, L.rotulo(l)),
         h('div', { class: 'sub' }, L.formatData(l.data) + (l.fixo ? ' · fixo' : '') + (l.titular ? ' · ' + l.titular : '') + (l.categoria && !estado.agrupar ? ' · ' + L.categoriaDe(l.categoria).nome : '') + (pago ? '' : ' · pendente'))),
+      h('span', { class: 'lider', 'aria-hidden': 'true' }),
       h('div', { class: 'val ' + (sinal > 0 ? 'pos' : 'neg') }, (sinal > 0 ? '+' : '') + L.formatBRL(sinal * l.valor)));
   }
 
@@ -1067,7 +1078,7 @@
 
   // ---------- atualizar o app ----------
   // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
-  const VERSAO_APP = '8';
+  const VERSAO_APP = '9';
   async function atualizarApp(btn) {
     btn.textContent = 'Atualizando…'; btn.disabled = true;
     try {
