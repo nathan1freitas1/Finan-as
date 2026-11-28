@@ -26,10 +26,18 @@
     return m || 'Algo deu errado.';
   };
   async function chamar(caminho, opcoes) {
-    let r;
-    try { r = await fetch(URL_BASE + caminho, opcoes); } catch (e) { const er = new Error('Sem conexão com a internet.'); er.offline = true; throw er; }
+    let r, txt;
+    // sem resposta em 12 s = tratar como sem conexão (senão o app ficaria esperando para sempre)
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const fim = setTimeout(() => { if (ctl) ctl.abort(); }, 12000);
+    try {
+      r = await fetch(URL_BASE + caminho, Object.assign({}, opcoes, ctl ? { signal: ctl.signal } : {}));
+      txt = await r.text();
+    } catch (e) {
+      const er = new Error(ctl && ctl.signal.aborted ? 'A nuvem demorou demais para responder. Tente de novo.' : 'Sem conexão com a internet.');
+      er.offline = true; throw er;
+    } finally { clearTimeout(fim); }
     let corpo = null;
-    const txt = await r.text();
     try { corpo = txt ? JSON.parse(txt) : null; } catch (e) { corpo = txt; }
     if (!r.ok) {
       const er = new Error(traduzir(corpo && (corpo.error_description || corpo.msg || corpo.message || corpo.error)));

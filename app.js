@@ -65,6 +65,8 @@
   const juntosPronto = () => Nuvem.logado() && Juntos.pronto();
   async function recarregar() {
     if (estado.espaco === 'juntos' && Nuvem.logado()) {
+      const ap = document.getElementById('app');
+      if (ap && !ap.children.length) ap.append(h('p', { class: 'nota', style: 'padding:32px 16px;text-align:center' }, 'Carregando o Juntos…'));
       try { await Juntos.carregar(); estado.juntosErro = ''; }
       catch (e) { estado.juntosErro = e.message + (e.status === 406 || e.status === 404 ? ' (o banco ainda não liberou o schema "meucaixa" na API do Supabase.)' : ''); }
     }
@@ -1092,7 +1094,7 @@
 
   // ---------- atualizar o app ----------
   // Apaga só os arquivos guardados do app (cache) e o service worker; o banco com os lançamentos não é tocado.
-  const VERSAO_APP = '11';
+  const VERSAO_APP = '12';
   async function atualizarApp(btn) {
     btn.textContent = 'Atualizando…'; btn.disabled = true;
     try {

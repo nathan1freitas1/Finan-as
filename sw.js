@@ -1,7 +1,7 @@
 /* Service worker do Meu Caixa: deixa o app abrir sem internet.
    Estratégia: responde na hora com o que está guardado e atualiza o guardado em segundo plano.
    Ao publicar uma versão nova, troque o número em VERSAO para limpar o guardado antigo. */
-const VERSAO = 'v11';
+const VERSAO = 'v12';
 const CACHE = 'meu-caixa-' + VERSAO;
 const ARQUIVOS = [
   './', 'index.html', 'styles.css', 'logic.js', 'db.js', 'fatura.js', 'nuvem.js', 'juntos.js', 'sync.js', 'app.js', 'manifest.webmanifest', 'bricolage.woff2', 'instrument.woff2',

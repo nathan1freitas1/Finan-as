@@ -24,6 +24,28 @@
 <script src="sync.js"></script>
 <script src="app.js"></script>
 <script>
+  // rede de segurança: se depois de 8 s a tela continua vazia, oferece um botão de reparo
+  // (limpa só o guardado do aplicativo; seus lançamentos não são tocados)
+  setTimeout(function () {
+    var app = document.getElementById('app');
+    if (!app || app.children.length) return;
+    var d = document.createElement('div');
+    d.style.cssText = 'padding:40px 20px;text-align:center;color:#e8efe9;font-family:system-ui,sans-serif';
+    d.innerHTML = '<p style="font-size:18px;margin:0 0 8px">O Meu Caixa não abriu.</p><p style="opacity:.7;margin:0 0 20px">Seus lançamentos continuam guardados. Toque abaixo para baixar a versão nova.</p>';
+    var b = document.createElement('button');
+    b.textContent = 'Reparar e abrir de novo';
+    b.style.cssText = 'font-size:16px;padding:12px 20px;border-radius:12px;border:0;background:#e6b450;color:#1a1405;font-weight:600';
+    b.onclick = function () {
+      var fim = function () { location.reload(); };
+      Promise.all([
+        navigator.serviceWorker ? navigator.serviceWorker.getRegistrations().then(function (r) { return Promise.all(r.map(function (x) { return x.unregister(); })); }) : 0,
+        window.caches ? caches.keys().then(function (k) { return Promise.all(k.map(function (n) { return caches.delete(n); })); }) : 0
+      ]).then(fim, fim);
+    };
+    d.appendChild(b); app.appendChild(d);
+  }, 8000);
+</script>
+<script>
   // deixa o app abrir sem internet (só funciona servido por https ou localhost)
   if ('serviceWorker' in navigator) {
     addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
