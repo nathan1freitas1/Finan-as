@@ -1,6 +1,6 @@
 /* Camada de dados do Meu Caixa: IndexedDB, com memória como plano B.
    O resto do app só fala com este objeto; trocar por banco online depois é mexer só aqui. */
-const DB = (function () {
+const DBLocal = (function () {
   const NOME = 'meucaixa';
   const VERSAO = 2; // v2 acrescentou 'fixos' e 'excecoes'
   const STORES = { lancamentos: 'id', config: 'chave', fixos: 'id', excecoes: 'id' };
@@ -133,3 +133,33 @@ const DB = (function () {
     excluirExcecao: (id) => excluir('excecoes', id),
   };
 })();
+
+/* Fachada: o app fala com DB e ele escolhe de onde vêm os dados.
+   'privado' = este aparelho (IndexedDB). 'juntos' = nuvem compartilhada (juntos.js).
+   Só estas chaves de configuração são compartilhadas no Juntos; o resto (backup, juros, visão) continua no aparelho. */
+const DB = (function (Loc) {
+  let modo = 'privado';
+  const CFG_JUNTOS = ['saldoInicial', 'saldoDefinido', 'autoPagoDesde', 'catMemoria'];
+  const J = () => (typeof Juntos !== 'undefined' ? Juntos : null);
+  const r = (loc, jun) => (...a) => (modo === 'juntos' ? jun(...a) : loc(...a));
+  return Object.assign({}, Loc, {
+    usarEspaco: (m) => { modo = (m === 'juntos' && J() && J().pronto()) ? 'juntos' : 'privado'; return modo; },
+    espaco: () => modo,
+    listarLancamentos: r(Loc.listarLancamentos, async () => J().listar('lancamentos')),
+    salvarLancamento: r(Loc.salvarLancamento, (l) => { if (!l.id) { l.id = crypto.randomUUID(); l.criadoEm = Date.now(); } return J().salvar('lancamentos', l); }),
+    excluirLancamento: r(Loc.excluirLancamento, (id) => J().excluir('lancamentos', id)),
+    listarFixos: r(Loc.listarFixos, async () => J().listar('fixos')),
+    salvarFixo: r(Loc.salvarFixo, (f) => { if (!f.id) { f.id = crypto.randomUUID(); f.criadoEm = Date.now(); } return J().salvar('fixos', f); }),
+    excluirFixo: r(Loc.excluirFixo, (id) => J().excluir('fixos', id)),
+    listarExcecoes: r(Loc.listarExcecoes, async () => J().listar('excecoes')),
+    salvarExcecao: r(Loc.salvarExcecao, (e) => J().salvar('excecoes', e)),
+    excluirExcecao: r(Loc.excluirExcecao, (id) => J().excluir('excecoes', id)),
+    lerConfig: async () => {
+      const base = await Loc.lerConfig();
+      if (modo !== 'juntos') return base;
+      CFG_JUNTOS.forEach((k) => delete base[k]);
+      return Object.assign(base, { saldoInicial: 0, saldoDefinido: true }, J().lerConfig());
+    },
+    salvarConfig: async (k, v) => (modo === 'juntos' && CFG_JUNTOS.includes(k) ? J().salvarConfig(k, v) : Loc.salvarConfig(k, v)),
+  });
+})(DBLocal);
